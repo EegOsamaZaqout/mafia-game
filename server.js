@@ -34,6 +34,12 @@ const ROLES = {
                desc: 'ما عندك قدرة خاصة. ركّز بالنقاش واكشف المافيا بالتصويت.' },
 };
 const SIDE_ROLES = ['godfather', 'sniper', 'mayor', 'jester'];
+// مدة كل مرحلة بالثواني حسب سرعة اللعب اللي بيختارها المضيف
+const PACE = {
+  fast:   { reveal: 20, night: 30, day: 90,  vote: 30, dusk: 6 },
+  normal: { reveal: 30, night: 45, day: 150, vote: 45, dusk: 7 },
+  slow:   { reveal: 40, night: 60, day: 240, vote: 60, dusk: 8 },
+};
 // أقل عدد لاعبين لتدخل كل شخصية جانبية تلقائياً
 const SIDE_MIN = { godfather: 7, sniper: 8, mayor: 9, jester: 10 };
 
@@ -91,7 +97,7 @@ function newRoom() {
     hostId: null,
     players: [],
     phase: 'lobby', // lobby | reveal | night | day | vote | dusk | ended
-    settings: { sideMode: 'auto', side: { godfather: true, sniper: true, mayor: true, jester: true }, revealOnDeath: true },
+    settings: { sideMode: 'auto', side: { godfather: true, sniper: true, mayor: true, jester: true }, revealOnDeath: true, pace: 'normal' },
     day: 0,
     night: null,
     votes: {},
@@ -104,13 +110,14 @@ function newRoom() {
     chatSeq: 0,
     clients: new Map(), // playerId -> Set(res)
     lastActivity: Date.now(),
+    timer: null, deadline: null, phaseTotal: 0, log: [], roleList: [],
   };
   rooms.set(room.code, room);
   return room;
 }
 
-function addPlayer(room, name) {
-  const p = { id: rid(), token: rid() + rid(), name, role: null, alive: true, ready: false, notes: [], conns: 0, voice: false };
+function addPlayer(room, name, device) {
+  const p = { id: rid(), token: rid() + rid(), name, device: String(device || '').slice(0, 40), role: null, alive: true, ready: false, notes: [], conns: 0, voice: false };
   room.players.push(p);
   if (!room.hostId) room.hostId = p.id;
   return p;
@@ -122,18 +129,45 @@ function removePlayer(room, id) {
   if (set) for (const res of set) { try { res.write('event: kicked\ndata: {}\n\n'); res.end(); } catch (e) {} }
   room.clients.delete(id);
   if (room.hostId === id) room.hostId = room.players[0] ? room.players[0].id : null;
-  if (!room.players.length) rooms.delete(room.code);
+  if (!room.players.length) { clearTimer(room); rooms.delete(room.code); }
 }
+
+// ---------------- المؤقتات ----------------
+function clearTimer(room) {
+  clearTimeout(room.timer);
+  room.timer = null; room.deadline = null; room.phaseTotal = 0;
+}
+function setTimer(room, key) {
+  clearTimeout(room.timer);
+  const sec = PACE[room.settings.pace][key];
+  room.phaseTotal = sec;
+  room.deadline = Date.now() + sec * 1000;
+  const stamp = room.phase + ':' + room.day;
+  room.timer = setTimeout(() => onTimeout(room, stamp), sec * 1000);
+}
+// لما يخلص الوقت بننقل المرحلة لحالها — ما حدا بيقدر يعطّل اللعبة
+function onTimeout(room, stamp) {
+  if (!rooms.has(room.code) || room.phase + ':' + room.day !== stamp) return;
+  if (room.phase === 'reveal') startNight(room);
+  else if (room.phase === 'night') resolveNight(room);
+  else if (room.phase === 'day') startVote(room);
+  else if (room.phase === 'vote') resolveVote(room);
+  else if (room.phase === 'dusk') startNight(room);
+  broadcast(room);
+}
+function addLog(room, icon, text) { room.log.push({ day: room.day, icon, text }); }
 
 // ---------------- مراحل اللعبة ----------------
 function startGame(room) {
   const roles = shuffle(buildRoles(room.players.length, room.settings));
+  room.roleList = roles.slice();
   room.players.forEach((p, i) => { p.role = roles[i]; p.alive = true; p.ready = false; p.notes = []; });
   Object.assign(room, {
     phase: 'reveal', day: 0, night: null, votes: {}, lastEvent: null, winner: null, winnerId: null,
-    doctorSelfUsed: false, sniperUsed: false, chat: [],
+    doctorSelfUsed: false, sniperUsed: false, chat: [], log: [],
   });
   sys(room, 'بدأت اللعبة! كل واحد يشوف دوره بالسر 🤫');
+  setTimer(room, 'reveal');
 }
 
 function startNight(room) {
@@ -142,6 +176,14 @@ function startNight(room) {
   room.night = { choices: {} };
   room.votes = {};
   sys(room, `🌙 الليلة ${room.day} — المدينة نامت.`);
+  setTimer(room, 'night');
+}
+
+function startVote(room) {
+  room.phase = 'vote';
+  room.votes = {};
+  sys(room, '🗳️ بلّش التصويت! مين بتشكّوا فيه؟');
+  setTimer(room, 'vote');
 }
 
 function nightActors(room) {
@@ -214,7 +256,11 @@ function resolveNight(room) {
   room.night = null;
   room.phase = 'day';
   sys(room, deaths.size ? `☀️ طلع الصبح... ${[...deaths].map((id) => getP(room, id).name).join(' و ')} ما صحي 💀` : '☀️ طلع الصبح وما مات حدا الليلة!');
+  if (deaths.size) [...deaths].forEach((id) => { const d = getP(room, id); addLog(room, '💀', `${d.name} انقتل بالليل${room.settings.revealOnDeath ? ` (كان ${ROLES[d.role].name})` : ''}`); });
+  else addLog(room, '🕊️', 'ليلة هادية، ما مات حدا');
+  if (saved) addLog(room, '💉', 'الطبيب أنقذ حدا من الموت');
   checkWin(room);
+  if (room.phase === 'day') setTimer(room, 'day');
 }
 
 function castVote(room, p, target) {
@@ -244,17 +290,22 @@ function resolveVote(room) {
     out.alive = false;
     room.lastEvent = { type: 'vote', day: room.day, out: pubDead(room, out), tie: false };
     sys(room, `⚖️ المدينة قررت تطلّع ${out.name}`);
+    addLog(room, '⚖️', `المدينة طلّعت ${out.name}${room.settings.revealOnDeath ? ` (كان ${ROLES[out.role].name})` : ''}`);
     if (out.role === 'jester') {
       room.winner = 'jester'; room.winnerId = out.id; room.phase = 'ended';
       sys(room, `🃏 ${out.name} كان المهرج وضحك على الكل!`);
+      addLog(room, '🃏', `${out.name} كان المهرج وفاز لحاله`);
+      clearTimer(room);
       return;
     }
   } else {
     room.lastEvent = { type: 'vote', day: room.day, out: null, tie: top.length > 1 };
     sys(room, '⚖️ ما حدا طلع اليوم.');
+    addLog(room, '🤝', top.length > 1 ? 'تعادل بالتصويت، ما حدا طلع' : 'المدينة تخطّت التصويت');
   }
   room.phase = 'dusk';
   checkWin(room);
+  if (room.phase === 'dusk') setTimer(room, 'dusk');
 }
 
 function checkWin(room) {
@@ -266,6 +317,8 @@ function checkWin(room) {
   else if (m >= a.length - m) w = 'mafia';
   if (w) {
     room.winner = w; room.phase = 'ended';
+    clearTimer(room);
+    addLog(room, w === 'town' ? '🏙️' : '🔪', w === 'town' ? 'فازت المدينة' : 'فازت المافيا');
     sys(room, w === 'town' ? '🏙️ فازت المدينة! انكشفت كل المافيا.' : '🔪 فازت المافيا! سيطروا على المدينة.');
   }
 }
@@ -273,7 +326,8 @@ function checkWin(room) {
 function backToLobby(room) {
   room.players = room.players.filter((p) => p.conns > 0 || p.id === room.hostId);
   room.players.forEach((p) => { p.role = null; p.alive = true; p.ready = false; p.notes = []; });
-  Object.assign(room, { phase: 'lobby', day: 0, night: null, votes: {}, lastEvent: null, winner: null, winnerId: null, chat: [] });
+  clearTimer(room);
+  Object.assign(room, { phase: 'lobby', day: 0, night: null, votes: {}, lastEvent: null, winner: null, winnerId: null, chat: [], log: [], roleList: [] });
 }
 
 // ---------------- الدردشة ----------------
@@ -334,6 +388,9 @@ function view(room, p) {
     doctorSelfUsed: p.role === 'doctor' ? room.doctorSelfUsed : undefined,
     sniperUsed: p.role === 'sniper' ? room.sniperUsed : undefined,
     lastEvent: room.lastEvent,
+    now: Date.now(), deadline: room.deadline, phaseTotal: room.phaseTotal, pace: PACE,
+    roleCounts: inGame ? room.roleList.reduce((m, r) => { m[r] = (m[r] || 0) + 1; return m; }, {}) : null,
+    log: room.log,
     winner: room.winner, winnerId: room.winnerId,
     chatChannel: chatChannel(room, p),
     chat: room.chat.filter((m) => canSee(room, p, m.ch)).slice(-80),
@@ -365,7 +422,7 @@ function handleAction(body) {
     const name = cleanName(body.name);
     if (!name) throw 'اكتب اسمك';
     const room = newRoom();
-    const p = addPlayer(room, name);
+    const p = addPlayer(room, name, body.device);
     sys(room, `${name} عمل الغرفة 👑`);
     return { code: room.code, pid: p.id, token: p.token };
   }
@@ -378,7 +435,8 @@ function handleAction(body) {
     if (room.phase !== 'lobby') throw 'اللعبة بلّشت، استنوا الجولة الجاية';
     if (room.players.length >= MAX_PLAYERS) throw 'الغرفة مليانة';
     if (room.players.some((x) => x.name === name)) throw 'الاسم مأخوذ، اختار اسم ثاني';
-    const p = addPlayer(room, name);
+    if (body.device && room.players.some((x) => x.device && x.device === String(body.device).slice(0, 40))) throw 'إنت داخل هالغرفة من هالجهاز أصلاً';
+    const p = addPlayer(room, name, body.device);
     sys(room, `${name} دخل الغرفة`);
     broadcast(room);
     return { code: room.code, pid: p.id, token: p.token };
@@ -410,6 +468,7 @@ function handleAction(body) {
       if (s.sideMode === 'auto' || s.sideMode === 'custom') room.settings.sideMode = s.sideMode;
       if (s.side) for (const r of SIDE_ROLES) if (r in s.side) room.settings.side[r] = !!s.side[r];
       if ('revealOnDeath' in s) room.settings.revealOnDeath = !!s.revealOnDeath;
+      if (s.pace in PACE) room.settings.pace = s.pace;
       break;
     }
     case 'kick': {
@@ -445,24 +504,22 @@ function handleAction(body) {
     case 'startVote': {
       hostOnly();
       if (room.phase !== 'day') throw 'مش وقت التصويت';
-      room.phase = 'vote'; room.votes = {};
-      sys(room, '🗳️ بلّش التصويت! مين بتشكّوا فيه؟');
+      startVote(room);
+      break;
+    }
+    case 'extend': {
+      hostOnly();
+      if (room.phase !== 'day' || !room.deadline) throw 'بس وقت النقاش';
+      const left = room.deadline - Date.now() + 30000;
+      clearTimeout(room.timer);
+      room.deadline = Date.now() + left;
+      room.phaseTotal = Math.round(Math.max(room.phaseTotal, left / 1000));
+      const stamp = room.phase + ':' + room.day;
+      room.timer = setTimeout(() => onTimeout(room, stamp), left);
+      sys(room, '⏱️ المضيف زاد 30 ثانية للنقاش');
       break;
     }
     case 'vote': castVote(room, p, body.target); break;
-    case 'startNight': {
-      hostOnly();
-      if (room.phase !== 'dusk') throw 'مش وقت الليل';
-      startNight(room);
-      break;
-    }
-    case 'force': {
-      hostOnly();
-      if (room.phase === 'reveal') startNight(room);
-      else if (room.phase === 'night') resolveNight(room);
-      else if (room.phase === 'vote') resolveVote(room);
-      break;
-    }
     case 'restart': {
       hostOnly();
       if (room.phase !== 'ended') throw 'اللعبة لسا ما خلصت';

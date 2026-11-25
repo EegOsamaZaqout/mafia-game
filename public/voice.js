@@ -282,7 +282,18 @@ const Voice = (() => {
     return '☀️ الكل بيسمع الكل';
   }
 
+  // زر المايك الصغير بالشريط العلوي
+  function paintMic() {
+    const b = document.getElementById('micPill');
+    if (!b) return;
+    b.classList.toggle('hidden', !joined);
+    b.classList.toggle('on', joined && !muted);
+    b.textContent = muted ? '🔇' : '🎙️';
+    b.setAttribute('aria-label', muted ? 'شغّل المايك' : 'سكّر المايك');
+  }
+
   function renderBar() {
+    paintMic();
     const el = bar();
     if (!el) return;
     if (!st) { el.classList.add('hidden'); lastBarHtml = ''; return; }
@@ -290,7 +301,7 @@ const Voice = (() => {
     const inVoice = st.players.filter((p) => p.voice && p.online);
     let html;
     if (!joined) {
-      html = `<button class="btn small" data-vact="join" ${joining ? 'disabled' : ''}>${joining ? '⏳ جاري الاتصال...' : '🎙️ انضم للصوت'}</button>
+      html = `<button class="btn sm red" data-vact="join" ${joining ? 'disabled' : ''}>${joining ? 'جاري الاتصال...' : '🎙️ انضم للصوت'}</button>
         <span class="vnote">${inVoice.length ? `${inVoice.length} بالصوت: ${inVoice.map((p) => esc(p.name)).join('، ')}` : 'ما حدا بالصوت لسا'}</span>`;
     } else {
       const chips = [`<span class="vchip me ${self.speaking ? 'talk' : ''}">${muted ? '🔇' : '🎙️'} أنت</span>`];
@@ -302,9 +313,9 @@ const Voice = (() => {
         const heard = canHear(p);
         chips.push(`<span class="vchip ${peer && peer.speaking ? 'talk' : ''} ${heard ? '' : 'off'} ${ok ? '' : 'wait'}" title="${ok ? '' : 'جاري الاتصال...'}">${ok ? (heard ? '🔊' : '🔈') : '⏳'} ${esc(p.name)}</span>`);
       }
-      html = `<button class="btn small ${muted ? 'ghost' : ''}" data-vact="mute">${muted ? '🔇 المايك مسكّر' : '🎙️ المايك شغال'}</button>
-        <button class="btn small ghost" data-vact="leave">خروج من الصوت</button>
-        ${blocked ? '<button class="btn small" data-vact="unblock">🔈 اضغط لتشغيل الصوت</button>' : ''}
+      html = `<button class="btn sm ${muted ? 'line' : ''}" data-vact="mute">${muted ? '🔇 المايك مسكّر' : '🎙️ المايك شغال'}</button>
+        <button class="btn sm line" data-vact="leave">اطلع من الصوت</button>
+        ${blocked ? '<button class="btn sm red" data-vact="unblock">🔈 شغّل الصوت</button>' : ''}
         <span class="vstatus">${statusText()}</span>
         <div class="vchips">${chips.join('')}</div>`;
     }
@@ -336,6 +347,6 @@ const Voice = (() => {
 
   function reset() { leave(true); st = null; autoTried = false; renderBar(); }
 
-  return { onState, onSignal, reset };
+  return { onState, onSignal, reset, paintMic };
 })();
 window.Voice = Voice;

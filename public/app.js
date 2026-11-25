@@ -1,5 +1,5 @@
 // =====================================================
-//  لعبة المافيا أونلاين — واجهة اللاعب
+//  مافيا — واجهة اللاعب
 // =====================================================
 'use strict';
 
@@ -10,20 +10,29 @@ const KEY = 'mafia_session';
 let session = loadSession();
 let state = null;
 let es = null;
+let offset = 0;            // فرق الساعة بين جهازك والسيرفر
 let lastPhaseKey = '';
 let lastChatId = 0;
 let unread = 0;
 let flipped = false;
-let lastMainHtml = '';
-let lastTopHtml = '';
-let lastBeat = Date.now();
 let busy = false;
+let lastBeat = Date.now();
+let curTab = 'chat';
+const cache = {};          // آخر HTML لكل جزء، عشان ما نرسم إشي ما تغيّر
 
 // ---------------- أدوات ----------------
 function loadSession() { try { return JSON.parse(localStorage.getItem(KEY)); } catch (e) { return null; } }
 function saveSession(s) { try { s ? localStorage.setItem(KEY, JSON.stringify(s)) : localStorage.removeItem(KEY); } catch (e) {} }
+function deviceId() {
+  try {
+    let d = localStorage.getItem('mafia_device');
+    if (!d) { d = Math.random().toString(36).slice(2) + Date.now().toString(36); localStorage.setItem('mafia_device', d); }
+    return d;
+  } catch (e) { return ''; }
+}
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const initial = (n) => esc([...String(n).trim()][0] || '?');
+function put(el, key, html) { if (cache[key] !== html) { el.innerHTML = html; cache[key] = html; } }
 
 function toast(msg) {
   const t = $('#toast');
@@ -42,14 +51,17 @@ async function api(action, data = {}, withSession = true) {
     if (j.error) toast(j.error);
     return j;
   } catch (e) {
-    toast('مشكلة بالاتصال بالسيرفر');
+    toast('ما في اتصال بالسيرفر، تأكد من النت');
     return { error: 'network' };
   }
 }
 
-const R = (id) => (state && state.roles[id]) || { name: '?', icon: '?', team: 'town' };
+const R = (id) => (state && state.roles[id]) || { name: '?', icon: '?', team: 'town', desc: '' };
 const P = (id) => state.players.find((p) => p.id === id);
 const teamName = { mafia: 'فريق المافيا', town: 'فريق المدينة', neutral: 'لحاله' };
+const ORD = ['الأولى', 'الثانية', 'الثالثة', 'الرابعة', 'الخامسة', 'السادسة', 'السابعة', 'الثامنة', 'التاسعة', 'العاشرة'];
+const DAYORD = ['الأول', 'الثاني', 'الثالث', 'الرابع', 'الخامس', 'السادس', 'السابع', 'الثامن', 'التاسع', 'العاشر'];
+const ord = (n, list) => list[n - 1] || String(n);
 
 // ---------------- الاتصال ----------------
 function connect() {
@@ -62,6 +74,7 @@ function connect() {
     lastBeat = Date.now();
     $('#conn').classList.add('hidden');
     state = JSON.parse(e.data);
+    offset = state.now - Date.now();
     render();
     if (window.Voice) Voice.onState(state);
   };
@@ -70,7 +83,7 @@ function connect() {
   es.addEventListener('kicked', () => leaveLocal('طلعت من الغرفة'));
   es.onerror = () => {
     $('#conn').classList.remove('hidden');
-    if (es.readyState === 2) setTimeout(tryResume, 2500); // السيرفر رفض — يمكن الغرفة انحذفت
+    if (es.readyState === 2) setTimeout(tryResume, 2500);
   };
 }
 
@@ -84,42 +97,51 @@ async function tryResume() {
 
 function leaveLocal(msg) {
   if (es) es.close();
-  es = null; session = null; state = null; lastPhaseKey = ''; lastChatId = 0; lastMainHtml = ''; lastTopHtml = '';
-  if (window.Voice) Voice.reset();
+  es = null; session = null; state = null; lastPhaseKey = ''; lastChatId = 0;
+  for (const k in cache) delete cache[k];
   saveSession(null);
+  if (window.Voice) Voice.reset();
   $('#conn').classList.add('hidden');
   if (msg) toast(msg);
   renderHome();
 }
 
-// ---------------- الرئيسية ----------------
+// ---------------- الصفحة الرئيسية ----------------
 function renderHome() {
   document.body.classList.remove('night');
-  $('#topInfo').innerHTML = '';
-  lastMainHtml = ''; lastTopHtml = '';
-  $('#chat').classList.add('hidden');
-  document.querySelector('.layout').classList.add('solo');
+  $('#stripInfo').innerHTML = '';
+  $('#side').classList.add('hidden');
+  $('#dock').classList.add('hidden');
+  $('#sideToggle').classList.add('hidden');
+  $('#shell').classList.add('solo');
+  $('#clock').classList.add('hidden');
+  for (const k in cache) delete cache[k];
   const urlCode = new URLSearchParams(location.search).get('room') || '';
   let savedName = '';
   try { savedName = localStorage.getItem('mafia_name') || ''; } catch (e) {}
   main.innerHTML = `
     <div class="home">
       <div class="hero">
-        <div class="big">مافيا</div>
-        <p>المدينة نايمة... والمافيا صاحية 🔪</p>
-      </div>
-      <div class="card">
-        <label class="muted">اسمك</label>
-        <input id="nameIn" maxlength="20" placeholder="مثلاً: أبو العبد" value="${esc(savedName)}">
-        <div class="spacer"></div>
-        <button class="btn" data-act="create">👑 اعمل غرفة جديدة</button>
-        <div class="divider">أو ادخل غرفة صاحبك</div>
-        <div class="row">
-          <input id="codeIn" class="code" maxlength="4" placeholder="CODE" value="${esc(urlCode)}">
-          <button class="btn ghost" data-act="join" style="flex:.6">دخول</button>
+        <div class="fan" aria-hidden="true">
+          <div class="card"><span class="ini">؟</span></div>
+          <div class="card face mafia"><span class="ini">🔪</span><span class="rname">مافيا</span></div>
+          <div class="card"><span class="ini">؟</span></div>
         </div>
-        <div class="spacer"></div>
-        <div class="center"><button class="link" data-act="rules">📜 كيف بنلعب؟ وشو الأدوار؟</button></div>
+        <h1>مافيا</h1>
+      </div>
+      <p class="tagline">كل واحد من جواله، والأدوار بتتوزع بالسر. المافيا بيقتلوا بالليل، والمدينة بتكشفهم بالنهار.</p>
+      <div class="form">
+        <div>
+          <label class="fl" for="nameIn">اسمك باللعبة</label>
+          <input id="nameIn" maxlength="20" placeholder="مثلاً: أبو العبد" value="${esc(savedName)}">
+        </div>
+        <button class="btn red wide" data-act="create">اعمل غرفة جديدة</button>
+        <div class="or">أو ادخل غرفة صاحبك</div>
+        <div class="joinrow">
+          <input id="codeIn" class="codein" maxlength="4" placeholder="الكود" value="${esc(urlCode)}" aria-label="كود الغرفة">
+          <button class="btn line" data-act="join">ادخل</button>
+        </div>
+        <div style="text-align:center"><button class="link" data-act="rules">كيف بنلعب؟</button></div>
       </div>
     </div>`;
   if (urlCode) $('#nameIn').focus();
@@ -129,10 +151,10 @@ async function doCreateOrJoin(kind) {
   const name = $('#nameIn').value.trim();
   if (!name) return toast('اكتب اسمك أول');
   try { localStorage.setItem('mafia_name', name); } catch (e) {}
-  const data = { name };
+  const data = { name, device: deviceId() };
   if (kind === 'join') {
     data.code = $('#codeIn').value.trim().toUpperCase();
-    if (data.code.length !== 4) return toast('الكود 4 حروف');
+    if (data.code.length !== 4) return toast('الكود 4 حروف أو أرقام');
   }
   const r = await api(kind, data, false);
   if (r.error) return;
@@ -142,64 +164,119 @@ async function doCreateOrJoin(kind) {
   connect();
 }
 
-// ---------------- الرسم الرئيسي ----------------
+// ---------------- الستارة بين المراحل ----------------
+function curtain(title, sub, red) {
+  const c = $('#curtain');
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  $('#curtainTitle').textContent = title;
+  $('#curtainSub').textContent = sub || '';
+  c.classList.toggle('red', !!red);
+  c.classList.add('show');
+  clearTimeout(curtain._t);
+  curtain._t = setTimeout(() => c.classList.remove('show'), 1500);
+}
+function phaseCurtain(s) {
+  const me = s.me;
+  switch (s.phase) {
+    case 'reveal': return curtain('وُزّعت الأوراق', 'شوف دورك بالسر');
+    case 'night': return curtain('حلّ الليل', 'الليلة ' + ord(s.day, ORD));
+    case 'day': return curtain('طلع الصبح', 'اليوم ' + ord(s.day, DAYORD));
+    case 'vote': return curtain('التصويت', 'مين لازم يطلع؟');
+    case 'dusk': return curtain('المغرب', s.lastEvent && s.lastEvent.out ? `طلع ${s.lastEvent.out.name}` : 'ما حدا طلع');
+    case 'ended': {
+      const t = s.winner === 'town' ? 'فازت المدينة' : s.winner === 'mafia' ? 'فازت المافيا' : 'فاز المهرج';
+      return curtain(t, iWon() ? 'مبروك، فزت' : 'خسرت هالمرة', s.winner !== 'town');
+    }
+    case 'lobby': return me ? null : null;
+  }
+}
+function iWon() {
+  const s = state;
+  if (!s.winner) return false;
+  if (s.winner === 'jester') return s.winnerId === s.me.id;
+  return R(s.me.role).team === s.winner;
+}
+
+// ---------------- الرسم ----------------
 function render() {
   if (!state) return;
   const s = state;
-  const phaseKey = s.phase + ':' + s.day;
-  const phaseChanged = phaseKey !== lastPhaseKey;
-  if (phaseChanged) {
-    if (lastPhaseKey && navigator.vibrate) { try { navigator.vibrate(120); } catch (e) {} }
+  const key = s.phase + ':' + s.day;
+  if (key !== lastPhaseKey) {
+    if (lastPhaseKey) {
+      phaseCurtain(s);
+      if (navigator.vibrate) { try { navigator.vibrate(120); } catch (e) {} }
+    }
     if (s.phase === 'reveal') flipped = false;
-    lastPhaseKey = phaseKey;
+    lastPhaseKey = key;
+    window.scrollTo({ top: 0 });
   }
   document.body.classList.toggle('night', s.phase === 'night');
-  document.querySelector('.layout').classList.remove('solo');
-  renderTop();
+  $('#shell').classList.remove('solo');
+  $('#side').classList.remove('hidden');
+  $('#dock').classList.remove('hidden');
+  $('#sideToggle').classList.remove('hidden');
+  $('#clock').classList.remove('hidden');
 
   const views = { lobby: vLobby, reveal: vReveal, night: vNight, day: vDay, vote: vVote, dusk: vDusk, ended: vEnded };
-  const html = (views[s.phase] || vLobby)();
-  if (html !== lastMainHtml) { main.innerHTML = html; lastMainHtml = html; }
-  renderChat();
-  if (phaseChanged) window.scrollTo({ top: 0, behavior: 'smooth' });
+  const v = (views[s.phase] || vLobby)();
+  put(main, 'main', v.main);
+  put($('#dock'), 'dock', v.dock || '');
+  renderStrip();
+  renderSide();
+  tick();
 }
 
-function renderTop() {
+function renderStrip() {
   const s = state;
-  let html = `<span class="chip">🏠 ${esc(s.code)}</span>`;
-  if (s.me.role) {
-    const r = R(s.me.role);
-    html += `<button class="chip red" data-act="myrole">${r.icon} دورك: ${esc(r.name)}</button>`;
+  let h = `<span class="pill">غرفة <span class="code">${esc(s.code)}</span></span>`;
+  if (s.deadline) h += `<span class="pill time" id="timePill">--</span>`;
+  h += `<button class="pill mic hidden" id="micPill" data-vact="mute"></button>`;
+  if (s.me.role) h += `<button class="pill role" data-act="myrole">ورقتي</button>`;
+  put($('#stripInfo'), 'strip', h);
+  if (window.Voice) Voice.paintMic();
+}
+
+// العدّاد بيتحدث كل ربع ثانية
+function tick() {
+  const pill = $('#timePill');
+  const fill = $('#clockFill');
+  const clock = $('#clock');
+  if (!state || !state.deadline) { if (fill) fill.style.width = '0'; return; }
+  const left = Math.max(0, state.deadline - (Date.now() + offset));
+  const sec = Math.ceil(left / 1000);
+  const urgent = sec <= 10;
+  if (pill) {
+    pill.textContent = `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+    pill.classList.toggle('urgent', urgent);
   }
-  if (s.me.isHost) html += `<span class="chip">👑 مضيف</span>`;
-  if (html !== lastTopHtml) { $('#topInfo').innerHTML = html; lastTopHtml = html; }
+  const total = (state.phaseTotal || 1) * 1000;
+  fill.style.width = Math.min(100, (left / total) * 100) + '%';
+  clock.classList.toggle('urgent', urgent);
 }
+setInterval(tick, 250);
 
-// شريط أزرار المضيف
-function hostBar(buttons) {
-  if (!state.me.isHost || !buttons) return '';
-  return `<div class="host-bar"><div class="lbl">👑 تحكم المضيف</div><div class="row">${buttons}</div></div>`;
-}
-
-function playersMini() {
+// ---------------- الورقة ----------------
+// ورقة اللاعب: مقلوبة (ظهر أحمر) أو مكشوفة (وجه فاتح مع الدور)
+function card(p, o = {}) {
   const s = state;
-  return `<div class="card"><h3>👥 اللاعبين (${s.players.filter((p) => p.alive).length} عايشين من ${s.players.length})</h3>
-    <ul class="plist">${s.players.map((p) => {
-      const r = p.role ? R(p.role) : null;
-      return `<li class="${p.alive ? '' : 'dead'} ${p.id === s.me.id ? 'me' : ''} ${p.online ? '' : 'off'}">
-        <span class="avatar">${p.alive ? initial(p.name) : '💀'}</span>
-        <span class="nm">${esc(p.name)}${p.id === s.me.id ? ' (أنت)' : ''}</span>
-        ${p.voice ? '<span title="بالصوت">🎙️</span>' : ''}
-        ${r ? `<span title="${esc(r.name)}">${r.icon}</span>` : ''}
-        <span class="dot ${p.online ? 'on' : ''}"></span>
-      </li>`;
-    }).join('')}</ul></div>`;
+  const r = p.role ? R(p.role) : null;
+  const face = !!r && (p.id === s.me.id || !p.alive || s.phase === 'ended' || o.showRole);
+  const cls = ['card', face ? 'face' : '', face && r.team === 'mafia' ? 'mafia' : '', p.alive || s.phase === 'lobby' ? '' : 'dead',
+    p.id === s.me.id ? 'me' : '', p.online ? '' : 'off', o.sel ? 'sel' : ''].filter(Boolean).join(' ');
+  const inner = `
+    ${!face && r ? `<span class="corner" title="${esc(r.name)}">${r.icon}</span>` : ''}
+    ${p.voice ? '<span class="mic" title="بالصوت">🎙️</span>' : ''}
+    ${o.votes ? `<span class="votes">${o.votes}</span>` : ''}
+    ${face ? `<span class="ini">${r.icon}</span><span class="rname">${esc(r.name)}</span>` : `<span class="ini">${p.alive || s.phase === 'lobby' ? initial(p.name) : '✝'}</span>`}
+    ${o.who ? `<span class="who">${o.who}</span>` : ''}
+    <span class="nm">${p.id === s.hostId ? '👑 ' : ''}${esc(p.name)}${p.id === s.me.id ? ' (أنت)' : ''}</span>`;
+  if (o.act) {
+    return `<button class="${cls}" data-act="${o.act}" data-id="${p.id}" ${o.disabled ? 'disabled' : ''} aria-pressed="${o.sel ? 'true' : 'false'}" aria-label="${esc(p.name)}">${inner}</button>`;
+  }
+  return `<div class="${cls}">${o.kick ? `<button class="kick" data-act="kick" data-id="${p.id}" aria-label="اطرد ${esc(p.name)}">✕</button>` : ''}${inner}</div>`;
 }
-
-function deadBanner() {
-  if (state.me.alive || state.phase === 'ended') return '';
-  return `<div class="dead-banner">💀 أنت ميت — صرت تتفرج وبتشوف كل الأدوار. ممنوع تحكي للعايشين! (دردشة الأموات بس)</div>`;
-}
+const tableOf = (list, fn) => `<div class="table">${list.map(fn).join('')}</div>`;
 
 // ---------------- اللوبي ----------------
 function vLobby() {
@@ -207,106 +284,68 @@ function vLobby() {
   const n = s.players.length;
   const isHost = s.me.isHost;
   const st = s.settings;
+  const counts = {};
+  (s.rolePreview || []).forEach((r) => (counts[r] = (counts[r] || 0) + 1));
+  const order = ['godfather', 'mafia', 'doctor', 'detective', 'sniper', 'mayor', 'jester', 'citizen'];
+  const lineup = s.rolePreview
+    ? `<div class="lineup">${order.filter((r) => counts[r]).map((r) => `<span class="lu ${R(r).team === 'mafia' ? 'mafia' : ''}">${R(r).icon} ${esc(R(r).name)} <span class="n">${counts[r]}</span></span>`).join('')}</div>`
+    : `<p class="muted" style="color:var(--ash)">بدكم ${s.minPlayers} لاعبين على الأقل. ضايل ${s.minPlayers - n}.</p>`;
+  const pc = s.pace[st.pace];
+  const paceHint = `الليل ${pc.night} ث • النقاش ${Math.round(pc.day / 60 * 10) / 10} د • التصويت ${pc.vote} ث`;
 
-  let preview;
-  if (s.rolePreview) {
-    const counts = {};
-    s.rolePreview.forEach((r) => (counts[r] = (counts[r] || 0) + 1));
-    const order = ['godfather', 'mafia', 'doctor', 'detective', 'sniper', 'mayor', 'jester', 'citizen'];
-    preview = `<div class="roles-preview">${order.filter((r) => counts[r]).map((r) => {
-      const d = R(r);
-      return `<span class="rchip ${d.team === 'mafia' ? 'mafia' : ''} ${s.sideRoles.includes(r) ? 'side' : ''}">${d.icon} ${esc(d.name)} <span class="cnt">×${counts[r]}</span></span>`;
-    }).join('')}</div>`;
-  } else {
-    preview = `<div class="note">لازم يكون في ${s.minPlayers} لاعبين على الأقل عشان نبلّش. ضايل ${s.minPlayers - n}.</div>`;
-  }
-
-  const sideAuto = s.sideRoles.map((r) => `${R(r).icon} ${R(r).name} من ${s.sideMin[r]}`).join(' • ');
-  const settingsHtml = isHost ? `
-    <div class="card">
-      <h3>⚙️ إعدادات الأدوار الجانبية</h3>
-      <div class="seg">
-        <button class="${st.sideMode === 'auto' ? 'on' : ''}" data-act="mode" data-v="auto">تلقائي حسب العدد</button>
-        <button class="${st.sideMode === 'custom' ? 'on' : ''}" data-act="mode" data-v="custom">اختيار يدوي</button>
+  const settings = isHost ? `
+    <div class="section"><h2>الإعدادات</h2>
+      <div class="settings">
+        <div class="row"><div><div class="lbl">سرعة اللعب</div><div class="hint">${paceHint}</div></div>
+          <div class="seg">${[['fast', 'سريعة'], ['normal', 'عادية'], ['slow', 'هادية']].map(([k, t]) => `<button class="${st.pace === k ? 'on' : ''}" data-act="pace" data-v="${k}">${t}</button>`).join('')}</div></div>
+        <div class="row"><div><div class="lbl">الأدوار الجانبية</div><div class="hint">${st.sideMode === 'auto' ? 'بتدخل لحالها كل ما زاد عددكم' : 'إنت بتختار أي دور يدخل'}</div></div>
+          <div class="seg"><button class="${st.sideMode === 'auto' ? 'on' : ''}" data-act="mode" data-v="auto">تلقائي</button><button class="${st.sideMode === 'custom' ? 'on' : ''}" data-act="mode" data-v="custom">يدوي</button></div></div>
+        ${st.sideMode === 'custom' ? s.sideRoles.map((r) => `<button class="toggle" data-act="side" data-v="${r}"><span>${R(r).icon} ${esc(R(r).name)}</span><span class="switch ${st.side[r] ? 'on' : ''}"></span></button>`).join('') : ''}
+        <button class="toggle" data-act="reveal"><span><span class="lbl">اكشف دور اللي بيموت</span></span><span class="switch ${st.revealOnDeath ? 'on' : ''}"></span></button>
       </div>
-      <div class="spacer"></div>
-      ${st.sideMode === 'auto'
-        ? `<div class="note">كل ما زاد عددكم بتنضاف أدوار جانبية تلقائياً:<br>${sideAuto}</div>`
-        : s.sideRoles.map((r) => `<div class="toggle" data-act="side" data-v="${r}"><span>${R(r).icon} ${esc(R(r).name)} <span class="muted" style="font-size:13px">— ${esc(R(r).desc)}</span></span><span class="switch ${st.side[r] ? 'on' : ''}"></span></div>`).join('')
-          + `<div class="note" style="margin-top:8px">إذا العدد ما بيكفي، بتنشال الأدوار الجانبية الزايدة تلقائياً.</div>`}
-      <div class="spacer"></div>
-      <div class="toggle" data-act="reveal"><span>💀 كشف دور اللي بيموت</span><span class="switch ${st.revealOnDeath ? 'on' : ''}"></span></div>
-    </div>` : '';
+    </div>` : `<div class="section"><p style="color:var(--ash)">السرعة: ${({ fast: 'سريعة', normal: 'عادية', slow: 'هادية' })[st.pace]} (${paceHint}). المضيف بيختار الإعدادات.</p></div>`;
 
-  return `
-    <div class="card">
-      <div class="room-code">
-        <div><div class="muted">كود الغرفة — ابعته لصحابك</div><div class="code-box">${esc(s.code)}</div></div>
-        <button class="btn small ghost" data-act="copy">🔗 نسخ رابط الدعوة</button>
+  return {
+    main: `
+      <div class="lobby-head">
+        <div><div class="sub">كود الغرفة، ابعته لصحابك</div><div class="big-code">${esc(s.code)}</div></div>
+        <button class="btn line sm" data-act="copy">انسخ رابط الدعوة</button>
       </div>
-    </div>
-    <div class="card">
-      <h3>👥 اللاعبين (${n}/${s.maxPlayers})</h3>
-      <ul class="plist">${s.players.map((p) => `
-        <li class="${p.id === s.me.id ? 'me' : ''} ${p.online ? '' : 'off'}">
-          <span class="avatar">${initial(p.name)}</span>
-          <span class="nm">${p.id === s.hostId ? '👑 ' : ''}${esc(p.name)}${p.id === s.me.id ? ' (أنت)' : ''}</span>
-          ${p.voice ? '<span title="بالصوت">🎙️</span>' : ''}
-          <span class="dot ${p.online ? 'on' : ''}"></span>
-          ${isHost && p.id !== s.me.id ? `<button class="x" title="طرد" data-act="kick" data-id="${p.id}">✕</button>` : ''}
-        </li>`).join('')}</ul>
-    </div>
-    <div class="card">
-      <h3>🎭 توزيع الأدوار ${s.rolePreview ? `لـ ${n} لاعبين` : ''}</h3>
-      ${preview}
-      <div class="spacer"></div>
-      <button class="link" data-act="rules">شو بيعمل كل دور؟</button>
-    </div>
-    ${settingsHtml}
-    <div class="row">
-      ${isHost
-        ? `<button class="btn" data-act="start" ${n < s.minPlayers ? 'disabled' : ''}>🔪 ابدأ اللعبة</button>`
-        : `<div class="note center" style="flex:2">⏳ بانتظار المضيف يبدأ اللعبة...</div>`}
-      <button class="btn ghost" data-act="leave" style="flex:.5">خروج</button>
-    </div>`;
+      ${tableOf(s.players, (p) => card(p, { kick: isHost && p.id !== s.me.id }))}
+      <div class="section"><h2>الأوراق بهالجولة${s.rolePreview ? ` (${n} لاعبين)` : ''}</h2>${lineup}</div>
+      ${settings}`,
+    dock: isHost
+      ? `<button class="btn red" data-act="start" ${n < s.minPlayers ? 'disabled' : ''}>وزّع الأوراق وابدأ</button><button class="btn line" data-act="leave">اطلع</button>`
+      : `<span class="msg">بانتظار المضيف يبدأ اللعبة</span><button class="btn line" data-act="leave">اطلع</button>`,
+  };
 }
 
 // ---------------- كشف الدور ----------------
-function roleCardHtml(roleId) {
-  const r = R(roleId);
-  const mates = state.players.filter((p) => p.id !== state.me.id && p.role && R(p.role).team === 'mafia');
-  return `
-    <div class="role-card ${flipped ? 'flipped' : ''}" data-act="flip">
-      <div class="role-inner">
-        <div class="face front"><div class="q">؟</div><h2 style="margin-top:18px">اضغط لتشوف دورك</h2><p class="muted">تأكد إنه ما حدا بيطّلع على شاشتك 👀</p></div>
-        <div class="face back ${r.team}">
-          <div class="role-icon">${r.icon}</div>
-          <div class="role-name">${esc(r.name)}</div>
-          <div class="team-tag ${r.team}">${teamName[r.team]}</div>
-          <div class="role-desc">${esc(r.desc)}</div>
-          ${r.team === 'mafia' && mates.length ? `<div class="mates">🤝 شركاؤك: ${mates.map((m) => `${esc(m.name)} ${R(m.role).icon}`).join('، ')}</div>` : ''}
-          ${r.team === 'mafia' && !mates.length ? `<div class="mates">أنت المافيا الوحيد... بالتوفيق 😈</div>` : ''}
-        </div>
-      </div>
-    </div>`;
-}
-
 function vReveal() {
   const s = state;
-  const readyCount = s.players.filter((p) => p.ready).length;
-  const meReady = s.players.find((p) => p.id === s.me.id)?.ready;
-  return `
-    <div class="card">
-      <div class="phase-head"><div class="icon">🎭</div><h2>وزّعنا الأدوار</h2><p>شوف دورك واحفظه بالسر</p></div>
-      <div class="spacer"></div>
-      ${roleCardHtml(s.me.role)}
-      <div class="spacer"></div>
-      ${meReady
-        ? `<div class="done-msg">✓ جاهز — بانتظار الباقي (${readyCount}/${s.players.length})</div>`
-        : `<button class="btn" data-act="ready" ${flipped ? '' : 'disabled'}>✓ شفت دوري، أنا جاهز</button>
-           <div class="done-msg">${readyCount}/${s.players.length} جاهزين</div>`}
-    </div>
-    ${hostBar(`<button class="btn host dark" data-act="force">⏭️ ابدأ الليل الآن</button>`)}`;
+  const r = R(s.me.role);
+  const mates = s.players.filter((p) => p.id !== s.me.id && p.role && R(p.role).team === 'mafia');
+  const ready = s.players.filter((p) => p.ready).length;
+  const meReady = P(s.me.id)?.ready;
+  return {
+    main: `
+      <div class="stage"><h1>دورك</h1><p>اقلب الورقة. ما حدا غيرك بيشوفها.</p></div>
+      <div class="reveal">
+        <button class="flip ${flipped ? 'open' : ''}" data-act="flip" aria-label="اقلب ورقتك">
+          <div class="side-a"><div class="card"><span class="ini">؟</span><span class="tap">اضغط لتقلبها</span></div></div>
+          <div class="side-b ${r.team}">
+            <div class="big">${r.icon}</div>
+            <div class="rn">${esc(r.name)}</div>
+            <div class="tm ${r.team}">${teamName[r.team]}</div>
+            <div class="ds">${esc(r.desc)}</div>
+            ${r.team === 'mafia' ? `<div class="mates">${mates.length ? 'شركاؤك: ' + mates.map((m) => esc(m.name)).join('، ') : 'إنت المافيا الوحيد'}</div>` : ''}
+          </div>
+        </button>
+      </div>`,
+    dock: meReady
+      ? `<span class="msg">جاهز. بانتظار الباقي <b>${ready}/${s.players.length}</b></span>`
+      : `<button class="btn red" data-act="ready" ${flipped ? '' : 'disabled'}>شفت دوري، جاهز</button><span class="msg">${ready}/${s.players.length} جاهزين</span>`,
+  };
 }
 
 // ---------------- الليل ----------------
@@ -314,207 +353,189 @@ function vNight() {
   const s = state;
   const me = s.me;
   const r = R(me.role);
-  let body = '';
+  const mv = (s.night && s.night.mafiaVotes) || [];
+  let main = `<div class="stage"><h1>الليلة ${ord(s.day, ORD)}</h1>`;
+  let dock = '';
 
   if (!me.alive) {
-    // الأموات بيتفرجوا على اختيارات الليل
     const ch = (s.night && s.night.choices) || {};
-    const lines = s.players.filter((p) => p.alive && ch[p.id]).map((p) => {
-      const t = ch[p.id] === 'skip' ? 'ما أطلق' : esc(P(ch[p.id])?.name);
-      return `<li><span>${R(p.role).icon} ${esc(p.name)}</span><span>← ${t}</span></li>`;
+    main += `<p>إنت ميت. بتتفرج على اللي بيصير بالسر، وممنوع تحكي للعايشين.</p></div>`;
+    main += tableOf(s.players, (p) => {
+      const t = ch[p.id];
+      return card(p, { who: p.alive && t ? `← ${t === 'skip' ? 'ما أطلق' : esc(P(t)?.name)}` : '' });
     });
-    body = `<div class="card"><h3>👻 اللي صاير هالليلة</h3>${lines.length ? `<ul class="notes">${lines.join('')}</ul>` : '<p class="muted">لسا ما حدا اختار...</p>'}</div>`;
+    dock = `<span class="msg">إنت بتتفرج</span>`;
   } else if (!s.night.canAct) {
-    body = `<div class="card sleep"><div class="zz">😴</div><h2>نام بهدوء...</h2><p class="muted">ما عندك شي تعمله الليلة. استنى لحد ما يطلع الصبح، وادعي إنك تصحى 🙏</p></div>`;
+    main += `<p>نام. ما عندك شي تعمله الليلة، والصبح بيطلع لحاله لما يخلص الوقت.</p></div>`;
+    main += tableOf(s.players, (p) => card(p, { showRole: R(me.role).team === 'mafia' && p.role && R(p.role).team === 'mafia' }));
+    dock = `<span class="msg">نايم... 😴</span>`;
   } else {
-    const myChoice = s.night.myChoice;
-    let prompt = '';
-    let filter = (p) => p.alive;
-    let extra = '';
-    if (r.team === 'mafia') {
-      prompt = '🔪 اختاروا ضحية الليلة';
-      filter = (p) => p.alive && !(p.role && R(p.role).team === 'mafia');
-    } else if (me.role === 'doctor') {
-      prompt = '💉 مين بدك تحمي الليلة؟';
-      filter = (p) => p.alive && !(p.id === me.id && s.doctorSelfUsed);
-    } else if (me.role === 'detective') {
-      prompt = '🔍 مين بدك تفحص الليلة؟';
-      filter = (p) => p.alive && p.id !== me.id;
-    } else if (me.role === 'sniper') {
-      prompt = '🎯 معك رصاصة وحدة... بدك تطلقها الليلة؟';
-      filter = (p) => p.alive && p.id !== me.id;
-      extra = `<div class="spacer"></div><button class="btn ${myChoice === 'skip' ? '' : 'ghost'}" data-act="nightPick" data-id="skip">✋ لا، مش الليلة</button>`;
-    }
-    const mv = s.night.mafiaVotes || [];
-    body = `<div class="card">
-      <h2>${prompt}</h2>
-      ${me.role === 'doctor' && !s.doctorSelfUsed ? '<p class="muted">بتقدر تحمي حالك مرة وحدة بس.</p>' : ''}
-      ${r.team === 'mafia' && mv.length > 1 ? '<p class="muted">إذا اختلفتوا، بيتم اختيار الأكثر أصوات (وإذا تعادلتوا، عشوائي بينهم).</p>' : ''}
-      <div class="targets">${s.players.filter((p) => p.alive || false).map((p) => {
-        const ok = filter(p);
-        const tags = r.team === 'mafia' ? mv.filter((m) => m.target === p.id).map((m) => esc(m.name)).join('، ') : '';
-        return `<button class="target ${myChoice === p.id ? 'sel' : ''}" data-act="nightPick" data-id="${p.id}" ${ok ? '' : 'disabled'}>
-          <span class="avatar">${initial(p.name)}</span>
-          <span class="tn">${esc(p.name)}${p.id === me.id ? ' (أنت)' : ''}</span>
-          <div class="tags">${tags ? '🔪 ' + tags : (p.role && p.id !== me.id ? R(p.role).icon + ' ' + esc(R(p.role).name) : '')}</div>
-        </button>`;
-      }).join('')}</div>
-      ${extra}
-      ${myChoice ? `<div class="done-msg">✓ تم الاختيار — بتقدر تغيّر لحد ما الكل يخلص</div>` : ''}
-    </div>`;
+    const my = s.night.myChoice;
+    let prompt, ok;
+    if (r.team === 'mafia') { prompt = 'اختاروا مين تقتلوا الليلة. إذا اختلفتوا، بيطلع اللي عليه أكثر أصوات.'; ok = (p) => p.alive && !(p.role && R(p.role).team === 'mafia'); }
+    else if (me.role === 'doctor') { prompt = s.doctorSelfUsed ? 'اختار مين تحمي الليلة. حميت حالك قبل، فما بتقدر مرة ثانية.' : 'اختار مين تحمي الليلة. بتقدر تحمي حالك مرة وحدة باللعبة.'; ok = (p) => p.alive && !(p.id === me.id && s.doctorSelfUsed); }
+    else if (me.role === 'detective') { prompt = 'اختار مين تفحص. النتيجة بتوصلك لحالك الصبح.'; ok = (p) => p.alive && p.id !== me.id; }
+    else { prompt = 'معك رصاصة وحدة باللعبة كلها. بدك تطلقها الليلة؟'; ok = (p) => p.alive && p.id !== me.id; }
+    main += `<p>${prompt}</p></div>`;
+    main += tableOf(s.players, (p) => {
+      const picks = r.team === 'mafia' ? mv.filter((m) => m.target === p.id).map((m) => esc(m.name)) : [];
+      return card(p, { act: 'nightPick', disabled: !ok(p), sel: my === p.id, who: picks.length ? '🔪 ' + picks.join('، ') : '', showRole: r.team === 'mafia' && p.role && R(p.role).team === 'mafia' });
+    });
+    const chosen = my && my !== 'skip' ? P(my) : null;
+    dock = (me.role === 'sniper' ? `<button class="btn ${my === 'skip' ? 'on' : 'line'}" data-act="nightPick" data-id="skip">مش الليلة</button>` : '')
+      + `<span class="msg">${chosen ? `اخترت <b>${esc(chosen.name)}</b>. بتقدر تغيّر لحد ما يخلص الوقت.` : my === 'skip' ? 'ما رح تطلق الليلة.' : 'اضغط على ورقة لتختار.'}</span>`;
   }
-
-  return `
-    <div class="card"><div class="phase-head"><div class="icon"><span class="moon">🌙</span></div><h2>الليلة ${s.day}</h2><p>المدينة نايمة... أصحاب الأدوار بيشتغلوا بالسر</p></div></div>
-    ${deadBanner()}
-    ${body}
-    ${detectiveNotes()}
-    ${hostBar(`<button class="btn host dark" data-act="force" data-confirm="1">⏭️ إنهاء الليل (اللي ما اختار بيتخطى)</button>`)}
-    ${playersMini()}`;
+  main += notebook();
+  return { main, dock };
 }
 
-function detectiveNotes() {
+function notebook() {
   const me = state.me;
   if (me.role !== 'detective' || !me.notes.length) return '';
-  return `<div class="card"><h3>🔍 دفتر المحقق (سري)</h3><ul class="notes">${me.notes.map((n) =>
-    `<li><span>الليلة ${n.day}: ${esc(n.name)}</span><span class="res-${n.result}">${n.result === 'mafia' ? '🔪 مافيا!' : '✓ بريء'}</span></li>`).join('')}</ul></div>`;
+  return `<div class="notebook"><h3>دفتر المحقق</h3><ul>${me.notes.map((n) =>
+    `<li><span>الليلة ${ord(n.day, ORD)}: ${esc(n.name)}</span><span class="${n.result === 'mafia' ? 'mafia' : ''}">${n.result === 'mafia' ? 'مافيا' : 'بريء'}</span></li>`).join('')}</ul></div>`;
 }
 
-// ---------------- النهار ----------------
-function morningEvents() {
+// ---------------- الإعلانات ----------------
+function morning() {
   const e = state.lastEvent;
   if (!e || e.type !== 'morning') return '';
-  let html = '';
-  if (e.killed.length) {
-    html += e.killed.map((k) => `<div class="event kill"><span class="e-icon">💀</span><span>${esc(k.name)} انقتل الليلة${k.role ? ` — كان <b>${R(k.role).icon} ${esc(R(k.role).name)}</b>` : ''}</span></div>`).join('');
-  } else {
-    html += `<div class="event calm"><span class="e-icon">🕊️</span><span>ليلة هادية... ما مات حدا!</span></div>`;
-  }
-  if (e.saved) html += `<div class="event save"><span class="e-icon">💉</span><span>في حدا كان رح يموت... بس الطبيب أنقذه!</span></div>`;
-  return html;
+  let h = e.killed.length
+    ? e.killed.map((k) => `<div class="ann kill"><span class="ico">💀</span><span><b>${esc(k.name)}</b> انقتل الليلة${k.role ? `، وكان ${R(k.role).icon} ${esc(R(k.role).name)}` : ''}</span></div>`).join('')
+    : `<div class="ann"><span class="ico">🕊️</span><span>ليلة هادية، ما مات حدا</span></div>`;
+  if (e.saved) h += `<div class="ann"><span class="ico">💉</span><span>حدا كان رح يموت، بس الطبيب أنقذه</span></div>`;
+  return `<div class="announce">${h}</div>`;
 }
+function voteResult() {
+  const e = state.lastEvent;
+  if (!e || e.type !== 'vote') return '';
+  if (e.out) return `<div class="announce"><div class="ann kill"><span class="ico">⚖️</span><span>المدينة طلّعت <b>${esc(e.out.name)}</b>${e.out.role ? `، وكان ${R(e.out.role).icon} ${esc(R(e.out.role).name)}` : ''}</span></div></div>`;
+  return `<div class="announce"><div class="ann"><span class="ico">🤝</span><span>${e.tie ? 'تعادل بالأصوات' : 'المدينة تخطّت'}، ما حدا طلع اليوم</span></div></div>`;
+}
+const mafiaMate = (p) => R(state.me.role).team === 'mafia' && p.role && R(p.role).team === 'mafia';
 
+// ---------------- النهار ----------------
 function vDay() {
   const s = state;
-  return `
-    <div class="card"><div class="phase-head"><div class="icon">☀️</div><h2>صباح اليوم ${s.day}</h2><p>صحيت المدينة...</p></div>
-      <div class="spacer"></div>${morningEvents()}</div>
-    ${deadBanner()}
-    ${detectiveNotes()}
-    <div class="card center"><h2>🗣️ وقت النقاش</h2><p class="muted">احكوا مع بعض: مين بتشكّوا فيه؟ لما تجهزوا، المضيف بيفتح التصويت.</p></div>
-    ${hostBar(`<button class="btn host" data-act="startVote">🗳️ افتح التصويت</button>`)}
-    ${playersMini()}`;
+  return {
+    main: `
+      <div class="stage"><h1>صباح اليوم ${ord(s.day, DAYORD)}</h1><p>ناقشوا مين بتشكّوا فيه. التصويت بيبلش لحاله لما يخلص الوقت.</p></div>
+      ${morning()}
+      ${tableOf(s.players, (p) => card(p, { showRole: mafiaMate(p) }))}
+      ${notebook()}`,
+    dock: s.me.isHost
+      ? `<button class="btn red" data-act="startVote">ابدأ التصويت الآن</button><button class="btn line" data-act="extend">زيد 30 ثانية</button>`
+      : `<span class="msg">${s.me.alive ? 'وقت النقاش' : 'إنت ميت، بتتفرج بس'}</span>`,
+  };
 }
 
 // ---------------- التصويت ----------------
 function vVote() {
   const s = state;
   const votes = s.votes || {};
-  const aliveP = s.players.filter((p) => p.alive);
+  const alive = s.players.filter((p) => p.alive);
   const voted = Object.keys(votes).length;
-  const myVote = votes[s.me.id];
+  const my = votes[s.me.id];
   const counts = {};
   Object.values(votes).forEach((t) => (counts[t] = (counts[t] || 0) + 1));
   const votersOf = (id) => Object.entries(votes).filter(([, t]) => t === id).map(([v]) => esc(P(v)?.name)).join('، ');
-
-  return `
-    <div class="card"><div class="phase-head"><div class="icon">🗳️</div><h2>التصويت — اليوم ${s.day}</h2><p>مين لازم يطلع من المدينة؟ (${voted}/${aliveP.length} صوّتوا)</p></div></div>
-    ${deadBanner()}
-    <div class="card">
-      <div class="targets">${aliveP.map((p) => `
-        <button class="target ${myVote === p.id ? 'sel' : ''}" data-act="vote" data-id="${p.id}" ${!s.me.alive || p.id === s.me.id ? 'disabled' : ''}>
-          ${counts[p.id] ? `<span class="votes">${counts[p.id]}</span>` : ''}
-          <span class="avatar">${initial(p.name)}</span>
-          <span class="tn">${esc(p.name)}${p.id === s.me.id ? ' (أنت)' : ''}</span>
-          <div class="voters">${votersOf(p.id)}</div>
-        </button>`).join('')}</div>
-      <div class="spacer"></div>
-      ${s.me.alive ? `<button class="btn ${myVote === 'skip' ? '' : 'ghost'}" data-act="vote" data-id="skip">🤷 تخطي — ما بدي أصوّت على حدا ${counts.skip ? `(${counts.skip})` : ''}</button>` : ''}
-      ${myVote ? `<div class="done-msg">✓ صوّتت — بتقدر تغيّر صوتك لحد ما الكل يخلص</div>` : ''}
-      <p class="muted center" style="font-size:13px;margin:10px 0 0">إذا صار تعادل، ما حدا بيطلع.</p>
-    </div>
-    ${hostBar(`<button class="btn host dark" data-act="force" data-confirm="1">⏭️ إنهاء التصويت الآن</button>`)}
-    ${playersMini()}`;
+  const target = my && my !== 'skip' ? P(my) : null;
+  return {
+    main: `
+      <div class="stage"><h1>التصويت</h1><p>${voted} من ${alive.length} صوّتوا. إذا صار تعادل، ما حدا بيطلع.</p></div>
+      ${tableOf(s.players, (p) => p.alive
+        ? card(p, { act: 'vote', disabled: !s.me.alive || p.id === s.me.id, sel: my === p.id, votes: counts[p.id], who: votersOf(p.id), showRole: mafiaMate(p) })
+        : card(p))}`,
+    dock: s.me.alive
+      ? `<button class="btn ${my === 'skip' ? 'on' : 'line'}" data-act="vote" data-id="skip">تخطّي${counts.skip ? ` (${counts.skip})` : ''}</button>
+         <span class="msg">${target ? `صوّتت على <b>${esc(target.name)}</b>. بتقدر تغيّر.` : my === 'skip' ? 'اخترت تتخطى.' : 'اضغط على ورقة اللي بتشك فيه.'}</span>`
+      : `<span class="msg">الميت ما بيصوّت</span>`,
+  };
 }
 
-// ---------------- نتيجة التصويت ----------------
-function voteEvent() {
-  const e = state.lastEvent;
-  if (!e || e.type !== 'vote') return '';
-  if (e.out) return `<div class="event kill"><span class="e-icon">⚖️</span><span>المدينة طلّعت ${esc(e.out.name)}${e.out.role ? ` — كان <b>${R(e.out.role).icon} ${esc(R(e.out.role).name)}</b>` : ''}</span></div>`;
-  return `<div class="event calm"><span class="e-icon">🤝</span><span>${e.tie ? 'صار تعادل بالأصوات' : 'المدينة قررت تتخطى'}... ما حدا طلع اليوم.</span></div>`;
-}
-
+// ---------------- المغرب ----------------
 function vDusk() {
   const s = state;
-  return `
-    <div class="card"><div class="phase-head"><div class="icon">🌆</div><h2>المغرب — نتيجة التصويت</h2><p>الشمس بتغيب... والليل جاي</p></div>
-      <div class="spacer"></div>${voteEvent()}</div>
-    ${deadBanner()}
-    ${hostBar(`<button class="btn host" data-act="startNight">🌙 ابدأ الليل</button>`)}
-    ${!s.me.isHost ? '<div class="note center">⏳ بانتظار المضيف يبدأ الليل...</div><div class="spacer"></div>' : ''}
-    ${playersMini()}`;
+  return {
+    main: `
+      <div class="stage"><h1>المغرب</h1><p>الليل جاي بعد شوي.</p></div>
+      ${voteResult()}
+      ${tableOf(s.players, (p) => card(p, { showRole: mafiaMate(p) }))}`,
+    dock: `<span class="msg">الليل بيبلش لحاله</span>`,
+  };
 }
 
 // ---------------- النهاية ----------------
 function vEnded() {
   const s = state;
-  const myTeam = R(s.me.role).team;
-  let icon, title;
-  if (s.winner === 'town') { icon = '🏙️'; title = 'فازت المدينة!'; }
-  else if (s.winner === 'mafia') { icon = '🔪'; title = 'فازت المافيا!'; }
-  else { icon = '🃏'; title = `فاز المهرج ${esc(P(s.winnerId)?.name || '')}!`; }
-  const iWon = s.winner === 'jester' ? s.winnerId === s.me.id : myTeam === s.winner;
-  return `
-    <div class="card winner">
-      <div class="big-icon">${icon}</div>
-      <h2>${title}</h2>
-      <div class="me-res ${iWon ? 'win' : ''}">${iWon ? '🏆 مبروك، فزت!' : '😵 خسرت هالمرة'}</div>
-      <div class="spacer"></div>
-      ${morningEvents()}${voteEvent()}
-    </div>
-    <div class="card">
-      <h3>🎭 الأدوار الحقيقية</h3>
-      <table class="reveal-table">${s.players.map((p) => `
-        <tr class="${p.alive ? '' : 'dead'}"><td>${p.alive ? '❤️' : '💀'} ${esc(p.name)}${p.id === s.me.id ? ' (أنت)' : ''}</td>
-        <td>${R(p.role).icon} ${esc(R(p.role).name)}</td><td class="muted">${teamName[R(p.role).team]}</td></tr>`).join('')}
-      </table>
-    </div>
-    <div class="row">
-      ${s.me.isHost ? `<button class="btn" data-act="restart">🔁 جولة جديدة</button>` : `<div class="note center" style="flex:2">⏳ بانتظار المضيف يبدأ جولة جديدة...</div>`}
-      <button class="btn ghost" data-act="leave" style="flex:.5">خروج</button>
-    </div>`;
+  const icon = s.winner === 'town' ? '🏙️' : s.winner === 'mafia' ? '🔪' : '🃏';
+  const title = s.winner === 'town' ? 'فازت المدينة' : s.winner === 'mafia' ? 'فازت المافيا' : `فاز المهرج ${esc(P(s.winnerId)?.name || '')}`;
+  const won = iWon();
+  return {
+    main: `
+      <div class="verdict"><div class="big">${icon}</div><h1>${title}</h1><div class="me-res ${won ? 'win' : ''}">${won ? 'مبروك، فزت' : 'خسرت هالمرة'}</div></div>
+      ${morning()}${voteResult()}
+      ${tableOf(s.players, (p) => card(p))}`,
+    dock: s.me.isHost
+      ? `<button class="btn red" data-act="restart">جولة جديدة</button><button class="btn line" data-act="leave">اطلع</button>`
+      : `<span class="msg">بانتظار المضيف يبدأ جولة جديدة</span><button class="btn line" data-act="leave">اطلع</button>`,
+  };
 }
 
-// ---------------- الدردشة ----------------
+// ---------------- العمود الجانبي ----------------
+function renderSide() {
+  const s = state;
+  // السجل
+  const log = s.log || [];
+  put($('#pane-log'), 'log', log.length
+    ? `<ul class="loglist">${log.slice().reverse().map((l) => `<li><span class="d">${l.day ? 'يوم ' + l.day : ''}</span><span>${l.icon} ${esc(l.text)}</span></li>`).join('')}</ul>`
+    : `<div class="empty">لسا ما صار إشي. أول ما يموت حدا أو يطلع بالتصويت، بيبيّن هون.</div>`);
+  // الأدوار
+  const counts = s.roleCounts || (s.rolePreview || []).reduce((m, r) => { m[r] = (m[r] || 0) + 1; return m; }, {});
+  const order = ['godfather', 'mafia', 'doctor', 'detective', 'sniper', 'mayor', 'jester', 'citizen'];
+  const list = order.filter((r) => counts[r]);
+  put($('#pane-roles'), 'roles', list.length
+    ? `<div class="rolelist">${list.map((r) => `<div class="rr"><div class="ri">${R(r).icon}</div><div><div class="rt">${esc(R(r).name)} <span class="n">× ${counts[r]}</span></div><div class="rd">${esc(R(r).desc)}</div></div></div>`).join('')}</div>`
+    : `<div class="empty">الأدوار بتبيّن لما يصير عددكم ${s.minPlayers} أو أكثر.</div>`);
+  renderChat();
+}
+
+function setTab(t) {
+  curTab = t;
+  document.querySelectorAll('.tab').forEach((b) => b.classList.toggle('on', b.dataset.tab === t));
+  ['chat', 'log', 'roles'].forEach((k) => $('#pane-' + k).classList.toggle('hidden', k !== t));
+  if (t === 'chat') { unread = 0; updateBadges(); const b = $('#chatMsgs'); b.scrollTop = b.scrollHeight; }
+}
+const sideOpen = () => window.innerWidth > 920 || $('#side').classList.contains('open');
+function updateBadges() {
+  const show = unread > 0;
+  $('#chatBadge').textContent = unread; $('#chatBadge').classList.toggle('hidden', !show || curTab === 'chat');
+  $('#sideBadge').textContent = unread; $('#sideBadge').classList.toggle('hidden', !show);
+}
+
 function renderChat() {
   const s = state;
-  const chatEl = $('#chat');
-  chatEl.classList.remove('hidden');
   const ch = s.chatChannel;
-  const titles = { public: '💬 الدردشة العامة', mafia: '🔪 دردشة المافيا (سرية)', dead: '👻 دردشة الأموات' };
-  $('#chatTitle').textContent = ch ? titles[ch] : '🤫 الدردشة مقفلة بالليل';
-  $('.chat-head').classList.toggle('mafia', ch === 'mafia');
+  const titles = { public: 'الكل بيشوف هالدردشة', mafia: 'دردشة المافيا، ما حدا غيركم بيشوفها', dead: 'دردشة الأموات' };
+  const t = $('#chatTitle');
+  t.textContent = ch ? titles[ch] : 'الدردشة مقفلة بالليل';
+  t.className = 'chan' + (ch === 'mafia' ? ' mafia' : '');
   const input = $('#chatInput');
   input.disabled = !ch;
-  input.placeholder = ch ? (ch === 'mafia' ? 'خططوا بالسر...' : 'اكتب رسالة...') : 'نايمين... ما في حكي 😴';
+  input.placeholder = ch ? (ch === 'mafia' ? 'خططوا بالسر' : 'اكتب رسالة') : 'نايمين، ما في حكي';
 
   const newest = s.chat.length ? s.chat[s.chat.length - 1].id : 0;
   if (newest === lastChatId) return;
   const box = $('#chatMsgs');
-  const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
-  const added = s.chat.filter((m) => m.id > lastChatId && m.ch !== 'system').length;
+  const near = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+  const added = lastChatId ? s.chat.filter((m) => m.id > lastChatId && m.ch !== 'system').length : 0;
   lastChatId = newest;
-  const tag = { mafia: '[مافيا]', dead: '[أموات]' };
+  const tag = { mafia: 'مافيا: ', dead: 'ميت: ' };
   box.innerHTML = s.chat.map((m) => m.ch === 'system'
     ? `<div class="msg system">${esc(m.text)}</div>`
-    : `<div class="msg ${m.ch} ${m.from === s.me.name ? 'me' : ''}">${tag[m.ch] ? `<span class="tag">${tag[m.ch]}</span>` : ''}<b>${esc(m.from)}:</b>${esc(m.text)}</div>`).join('');
-  if (nearBottom || added) box.scrollTop = box.scrollHeight;
-  if (!chatEl.classList.contains('open') && window.innerWidth <= 900 && added) {
-    unread += added;
-    $('#chatBadge').textContent = unread;
-    $('#chatBadge').classList.remove('hidden');
-  }
+    : `<div class="msg ${m.ch} ${m.from === s.me.name ? 'me' : ''}"><b>${tag[m.ch] || ''}${esc(m.from)}</b>${esc(m.text)}</div>`).join('');
+  if (near || added) box.scrollTop = box.scrollHeight;
+  if (added && (!sideOpen() || curTab !== 'chat')) { unread += added; updateBadges(); }
 }
 
 $('#chatForm').addEventListener('submit', async (e) => {
@@ -525,75 +546,57 @@ $('#chatForm').addEventListener('submit', async (e) => {
   input.value = '';
   await api('chat', { text });
 });
-$('#chatToggle').addEventListener('click', () => {
-  if (window.innerWidth > 900) return;
-  $('#chat').classList.toggle('open');
-  unread = 0;
-  $('#chatBadge').classList.add('hidden');
-  const box = $('#chatMsgs');
-  box.scrollTop = box.scrollHeight;
-});
 
 // ---------------- النوافذ ----------------
 function openModal(html) {
-  $('#modalBox').innerHTML = html + `<div class="spacer"></div><button class="btn ghost" data-act="closeModal">سكّر</button>`;
+  $('#modalBox').innerHTML = html + `<div style="margin-top:16px"><button class="btn line wide" data-act="closeModal">سكّر</button></div>`;
   $('#modal').classList.remove('hidden');
 }
 $('#modal').addEventListener('click', (e) => { if (e.target.id === 'modal') $('#modal').classList.add('hidden'); });
 
-const RULES_ROLES = {
-  mafia: { name: 'مافيا', team: 'mafia', icon: '🔪', desc: 'كل ليلة بتتفق مع باقي المافيا على شخص تقتلوه.' },
-  godfather: { name: 'زعيم المافيا', team: 'mafia', icon: '🎩', desc: 'من المافيا، بس بيطلع بريء لما المحقق يفحصه.' },
-  doctor: { name: 'الطبيب', team: 'town', icon: '💉', desc: 'كل ليلة بيحمي شخص من القتل (حاله مرة وحدة بس).' },
-  detective: { name: 'المحقق', team: 'town', icon: '🔍', desc: 'كل ليلة بيفحص شخص وبيعرف إذا مافيا ولا بريء.' },
-  sniper: { name: 'القناص', team: 'town', icon: '🎯', desc: 'رصاصة وحدة باللعبة كلها، بيطلقها بالليل.' },
-  mayor: { name: 'العمدة', team: 'town', icon: '⚖️', desc: 'صوته بالتصويت بيتحسب صوتين.' },
-  jester: { name: 'المهرج', team: 'neutral', icon: '🃏', desc: 'بيفوز لحاله إذا المدينة صوّتت عليه وطلّعته.' },
-  citizen: { name: 'مواطن', team: 'town', icon: '👤', desc: 'ما عنده قدرة، سلاحه النقاش والتصويت.' },
-};
 function showRules() {
-  const roles = state ? state.roles : RULES_ROLES;
   openModal(`
-    <h2>📜 كيف بنلعب؟</h2>
-    <p>كل لاعب بياخد دور سري. <b>المافيا</b> بيعرفوا بعض، والباقي ما بيعرفوا مين مين.</p>
-    <p>🌙 <b>بالليل:</b> المافيا بيختاروا ضحية، الطبيب بيحمي حدا، والمحقق بيفحص حدا.<br>
-    ☀️ <b>بالنهار:</b> بنعرف مين مات، بنتناقش، وبعدين بنصوّت مين يطلع.<br>
-    🏆 <b>المدينة بتفوز</b> لما تطلّع كل المافيا. <b>المافيا بتفوز</b> لما يصير عددهم مساوي أو أكثر من الباقيين.</p>
-    <h3 style="margin-top:14px">الأدوار</h3>
-    ${Object.entries(roles).map(([, r]) => `<div class="role-row"><div class="ri">${r.icon}</div><div><b>${esc(r.name)}</b> <span class="muted">(${teamName[r.team]})</span><br><span class="muted">${esc(r.desc)}</span></div></div>`).join('')}
-    <h3 style="margin-top:14px">توزيع المافيا حسب العدد</h3>
-    <p class="muted">4–5 لاعبين: 1 • 6–8: 2 • 9–11: 3 • 12–15: 4 • 16–20: 5<br>الأدوار الجانبية بتدخل تلقائياً: زعيم المافيا من 7، القناص من 8، العمدة من 9، المهرج من 10 (والمضيف بيقدر يختار يدوي).</p>`);
+    <h2>كيف بنلعب؟</h2>
+    <p>كل واحد بياخد ورقة فيها دور سري. المافيا بيعرفوا بعض، والباقي ما بيعرفوا مين مين.</p>
+    <p><b>بالليل</b> المافيا بيختاروا ضحية، الطبيب بيحمي حدا، والمحقق بيفحص حدا. الباقي نايمين.</p>
+    <p><b>بالنهار</b> بنعرف مين مات، بنتناقش، وبعدين بنصوّت مين يطلع. إذا تعادلت الأصوات، ما حدا بيطلع.</p>
+    <p><b>المدينة بتفوز</b> لما تطلّع كل المافيا. <b>المافيا بتفوز</b> لما يصير عددهم قد الباقيين أو أكثر.</p>
+    <p>كل مرحلة إلها وقت، ولما يخلص الوقت اللعبة بتكمّل لحالها. هيك ما حدا بيقدر يعطّلها.</p>
+    <p style="color:var(--ash)">عدد المافيا: 1 لـ 4–5 لاعبين، 2 لـ 6–8، 3 لـ 9–11، 4 لـ 12–15، و5 لـ 16–20. الأدوار الجانبية بتدخل لحالها: زعيم المافيا من 7، القناص من 8، العمدة من 9، والمهرج من 10.</p>`);
 }
 
-// اختيار فوري: بنعلّم الاختيار على الشاشة قبل ما يرد السيرفر
+// ---------------- الأفعال ----------------
 async function pick(el, action, target) {
-  document.querySelectorAll(`[data-act="${el.dataset.act}"]`).forEach((b) => b.classList.remove('sel'));
-  el.classList.add('sel');
+  document.querySelectorAll(`[data-act="${el.dataset.act}"]`).forEach((b) => b.classList.remove('sel', 'on'));
+  el.classList.add(el.classList.contains('card') ? 'sel' : 'on');
   const r = await api(action, { target });
-  if (r.error) { lastMainHtml = ''; render(); }
+  if (r.error) { delete cache.main; delete cache.dock; render(); }
 }
-// زر بيشتغل مرة وحدة لحد ما يرد السيرفر (ما في ضغطات مكررة)
 async function once(el, fn) {
   if (busy) return;
   busy = true;
   el.disabled = true;
   el.classList.add('loading');
-  try { await fn(); } finally {
-    busy = false;
-    el.disabled = false;
-    el.classList.remove('loading');
-  }
+  try { await fn(); } finally { busy = false; el.disabled = false; el.classList.remove('loading'); }
 }
 
-// ---------------- الأزرار (event delegation) ----------------
 document.addEventListener('click', async (e) => {
+  const tab = e.target.closest('[data-tab]');
+  if (tab) return setTab(tab.dataset.tab);
+  if (e.target.closest('#sideClose')) { $('#side').classList.remove('open'); return; }
+  if (e.target.closest('#sideToggle')) {
+    const side = $('#side');
+    side.classList.toggle('open');
+    if (side.classList.contains('open')) setTab(unread ? 'chat' : curTab);
+    return;
+  }
+  // سكّر الدرج لما تكبس برّاه (موبايل)
+  if (window.innerWidth <= 920 && $('#side').classList.contains('open') && !e.target.closest('#side')) $('#side').classList.remove('open');
+
   const el = e.target.closest('[data-act]');
-  if (!el) return;
+  if (!el || el.disabled) return;
   const act = el.dataset.act;
   const id = el.dataset.id;
-  if (el.disabled) return;
-  if (el.dataset.confirm && !confirm('متأكد؟')) return;
-
   switch (act) {
     case 'create': return doCreateOrJoin('create');
     case 'join': return doCreateOrJoin('join');
@@ -601,15 +604,16 @@ document.addEventListener('click', async (e) => {
     case 'closeModal': return $('#modal').classList.add('hidden');
     case 'myrole': {
       const r = R(state.me.role);
-      return openModal(`<div class="center"><div class="role-icon">${r.icon}</div><div class="role-name">${esc(r.name)}</div><div class="team-tag ${r.team}" style="display:inline-block">${teamName[r.team]}</div><p class="role-desc">${esc(r.desc)}</p></div>`);
+      return openModal(`<div style="text-align:center"><div style="font-size:64px">${r.icon}</div><h2>${esc(r.name)}</h2><p style="font-weight:700">${teamName[r.team]}</p><p>${esc(r.desc)}</p></div>`);
     }
     case 'copy': {
       const link = `${location.origin}/?room=${state.code}`;
-      try { await navigator.clipboard.writeText(link); toast('✓ انسخ الرابط، ابعته لصحابك'); }
+      try { await navigator.clipboard.writeText(link); toast('انسخ الرابط، ابعته لصحابك'); }
       catch (err) { prompt('انسخ الرابط:', link); }
       return;
     }
-    case 'flip': flipped = true; return render();
+    case 'flip': if (!flipped) { flipped = true; delete cache.main; delete cache.dock; render(); } return;
+    case 'pace': return api('settings', { settings: { pace: el.dataset.v } });
     case 'mode': return api('settings', { settings: { sideMode: el.dataset.v } });
     case 'side': return api('settings', { settings: { side: { [el.dataset.v]: !state.settings.side[el.dataset.v] } } });
     case 'reveal': return api('settings', { settings: { revealOnDeath: !state.settings.revealOnDeath } });
@@ -617,10 +621,9 @@ document.addEventListener('click', async (e) => {
     case 'start': return once(el, () => api('start'));
     case 'ready': return once(el, () => api('ready'));
     case 'nightPick': return pick(el, 'night', id);
-    case 'startVote': return once(el, () => api('startVote'));
     case 'vote': return pick(el, 'vote', id);
-    case 'startNight': return once(el, () => api('startNight'));
-    case 'force': return once(el, () => api('force'));
+    case 'startVote': return once(el, () => api('startVote'));
+    case 'extend': return once(el, () => api('extend'));
     case 'restart': return once(el, () => api('restart'));
     case 'leave': {
       if (!confirm('بدك تطلع من الغرفة؟')) return;
@@ -632,6 +635,7 @@ document.addEventListener('click', async (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { $('#modal').classList.add('hidden'); $('#side').classList.remove('open'); }
   if (e.key === 'Enter' && !state && (e.target.id === 'codeIn' || e.target.id === 'nameIn')) {
     doCreateOrJoin(e.target.id === 'codeIn' || $('#codeIn').value.trim() ? 'join' : 'create');
   }
@@ -639,18 +643,15 @@ document.addEventListener('keydown', (e) => {
 
 // ---------------- حماية الاتصال ----------------
 function reconnect() { if (session) { $('#conn').classList.remove('hidden'); tryResume(); } }
-// إذا ما وصل إشي من السيرفر 40 ثانية، بنعيد الاتصال
 setInterval(() => { if (session && Date.now() - lastBeat > 40000) { lastBeat = Date.now(); reconnect(); } }, 5000);
-// لما ترجع للصفحة من تطبيق ثاني (واتساب مثلاً)
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && session && (!es || es.readyState !== 1 || Date.now() - lastBeat > 20000)) reconnect();
 });
 window.addEventListener('online', reconnect);
-// نبضة كل 4 دقايق عشان السيرفر المجاني ما ينام وإنتو بتلعبوا
 setInterval(() => {
   if (session) fetch('/api', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'hb', ...session }) }).catch(() => {});
 }, 4 * 60 * 1000);
 
 // ---------------- البداية ----------------
-if (session) { renderHome(); tryResume(); }
-else renderHome();
+renderHome();
+if (session) tryResume();
