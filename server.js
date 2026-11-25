@@ -110,7 +110,7 @@ function newRoom() {
 }
 
 function addPlayer(room, name) {
-  const p = { id: rid(), token: rid() + rid(), name, role: null, alive: true, ready: false, notes: [], conns: 0 };
+  const p = { id: rid(), token: rid() + rid(), name, role: null, alive: true, ready: false, notes: [], conns: 0, voice: false };
   room.players.push(p);
   if (!room.hostId) room.hostId = p.id;
   return p;
@@ -306,7 +306,7 @@ function view(room, p) {
   const players = room.players.map((q) => {
     let role = null;
     if (inGame && q.role && (q.id === p.id || omni || (myTeam === 'mafia' && teamOf(q) === 'mafia') || (!q.alive && room.settings.revealOnDeath))) role = q.role;
-    return { id: q.id, name: q.name, alive: q.alive, online: q.conns > 0, ready: q.ready, role };
+    return { id: q.id, name: q.name, alive: q.alive, online: q.conns > 0, ready: q.ready, voice: q.voice && q.conns > 0, role };
   });
 
   let night = null;
@@ -351,6 +351,13 @@ function broadcast(room) {
   }
 }
 
+function sendTo(room, pid, event, obj) {
+  const set = room.clients.get(pid);
+  if (!set) return;
+  const data = `event: ${event}\ndata: ${JSON.stringify(obj)}\n\n`;
+  for (const res of set) { try { res.write(data); } catch (e) {} }
+}
+
 // ---------------- الـ API ----------------
 function handleAction(body) {
   const { action } = body;
@@ -383,7 +390,19 @@ function handleAction(body) {
   const hostOnly = () => { if (!isHost) throw 'هاي للمضيف بس'; };
 
   switch (action) {
-    case 'resume': return { code: room.code };
+    case 'resume': return { ok: true, code: room.code };
+    case 'hb': return { ok: true }; // نبضة من اللاعب عشان السيرفر ما ينام
+    case 'signal': {
+      // رسائل ربط الصوت (WebRTC) بين لاعبين — بنوصلها للشخص المقصود بس
+      const t = getP(room, body.to);
+      if (!t || t.id === p.id) return { ok: true };
+      sendTo(room, t.id, 'signal', { from: p.id, vs: String(body.vs || ''), data: body.data });
+      return { ok: true };
+    }
+    case 'voice': {
+      p.voice = !!body.on;
+      break;
+    }
     case 'settings': {
       hostOnly();
       if (room.phase !== 'lobby') throw 'ما بتقدر تغيّر وقت اللعب';
@@ -467,7 +486,7 @@ function handleAction(body) {
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let data = '';
-    req.on('data', (c) => { data += c; if (data.length > 10000) { reject(new Error('too big')); req.destroy(); } });
+    req.on('data', (c) => { data += c; if (data.length > 100000) { reject(new Error('too big')); req.destroy(); } });
     req.on('end', () => resolve(data));
     req.on('error', reject);
   });
@@ -498,6 +517,7 @@ function handleEvents(req, res, url) {
     const set = room.clients.get(p.id);
     if (set && set.delete(res)) {
       p.conns = Math.max(0, p.conns - 1);
+      if (p.conns === 0) p.voice = false;
       if (rooms.has(room.code)) broadcast(room);
     }
   });
@@ -518,10 +538,28 @@ function serveStatic(pathname, res) {
   });
 }
 
+// ---------------- سيرفرات الصوت (STUN/TURN) ----------------
+// إذا حطيت متغير TURN_CREDENTIALS_URL على Render (رابط Open Relay من metered.ca)
+// بنجيب منه سيرفرات TURN عشان الصوت يشتغل حتى على الشبكات الصعبة.
+const STUN = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }];
+let iceCache = { at: 0, list: null };
+async function getIceServers() {
+  const url = process.env.TURN_CREDENTIALS_URL;
+  if (!url) return STUN;
+  if (iceCache.list && Date.now() - iceCache.at < 60 * 60 * 1000) return iceCache.list;
+  try {
+    const r = await fetch(url);
+    const list = await r.json();
+    if (Array.isArray(list) && list.length) { iceCache = { at: Date.now(), list: STUN.concat(list) }; return iceCache.list; }
+  } catch (e) { console.error('TURN fetch failed', e.message); }
+  return STUN;
+}
+
 // ---------------- تشغيل السيرفر ----------------
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   if (url.pathname === '/events') return handleEvents(req, res, url);
+  if (url.pathname === '/ice') return sendJson(res, 200, await getIceServers());
   if (url.pathname === '/api' && req.method === 'POST') {
     try {
       const body = JSON.parse((await readBody(req)) || '{}');
@@ -537,8 +575,8 @@ const server = http.createServer(async (req, res) => {
 
 // نبضة كل 20 ثانية عشان الاتصال ما ينقطع
 setInterval(() => {
-  for (const room of rooms.values()) for (const set of room.clients.values()) for (const res of set) { try { res.write(': ping\n\n'); } catch (e) {} }
-}, 20000);
+  for (const room of rooms.values()) for (const set of room.clients.values()) for (const res of set) { try { res.write('event: ping\ndata: 1\n\n'); } catch (e) {} }
+}, 15000);
 // تنظيف الغرف الفاضية كل 5 دقايق
 setInterval(() => {
   const now = Date.now();

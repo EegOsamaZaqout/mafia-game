@@ -14,6 +14,10 @@ let lastPhaseKey = '';
 let lastChatId = 0;
 let unread = 0;
 let flipped = false;
+let lastMainHtml = '';
+let lastTopHtml = '';
+let lastBeat = Date.now();
+let busy = false;
 
 // ---------------- أدوات ----------------
 function loadSession() { try { return JSON.parse(localStorage.getItem(KEY)); } catch (e) { return null; } }
@@ -52,8 +56,17 @@ function connect() {
   if (es) es.close();
   const q = new URLSearchParams({ code: session.code, pid: session.pid, token: session.token });
   es = new EventSource('/events?' + q);
-  es.onopen = () => $('#conn').classList.add('hidden');
-  es.onmessage = (e) => { state = JSON.parse(e.data); render(); };
+  lastBeat = Date.now();
+  es.onopen = () => { lastBeat = Date.now(); $('#conn').classList.add('hidden'); };
+  es.onmessage = (e) => {
+    lastBeat = Date.now();
+    $('#conn').classList.add('hidden');
+    state = JSON.parse(e.data);
+    render();
+    if (window.Voice) Voice.onState(state);
+  };
+  es.addEventListener('ping', () => { lastBeat = Date.now(); });
+  es.addEventListener('signal', (e) => { if (window.Voice) Voice.onSignal(JSON.parse(e.data)); });
   es.addEventListener('kicked', () => leaveLocal('طلعت من الغرفة'));
   es.onerror = () => {
     $('#conn').classList.remove('hidden');
@@ -64,14 +77,15 @@ function connect() {
 async function tryResume() {
   if (!session) return;
   const r = await api('resume');
-  if (r.ok) connect();
+  if (r.ok || r.code) connect();
   else if (r.error !== 'network') leaveLocal();
   else setTimeout(tryResume, 3000);
 }
 
 function leaveLocal(msg) {
   if (es) es.close();
-  es = null; session = null; state = null; lastPhaseKey = ''; lastChatId = 0;
+  es = null; session = null; state = null; lastPhaseKey = ''; lastChatId = 0; lastMainHtml = ''; lastTopHtml = '';
+  if (window.Voice) Voice.reset();
   saveSession(null);
   $('#conn').classList.add('hidden');
   if (msg) toast(msg);
@@ -82,6 +96,7 @@ function leaveLocal(msg) {
 function renderHome() {
   document.body.classList.remove('night');
   $('#topInfo').innerHTML = '';
+  lastMainHtml = ''; lastTopHtml = '';
   $('#chat').classList.add('hidden');
   document.querySelector('.layout').classList.add('solo');
   const urlCode = new URLSearchParams(location.search).get('room') || '';
@@ -143,7 +158,8 @@ function render() {
   renderTop();
 
   const views = { lobby: vLobby, reveal: vReveal, night: vNight, day: vDay, vote: vVote, dusk: vDusk, ended: vEnded };
-  main.innerHTML = (views[s.phase] || vLobby)();
+  const html = (views[s.phase] || vLobby)();
+  if (html !== lastMainHtml) { main.innerHTML = html; lastMainHtml = html; }
   renderChat();
   if (phaseChanged) window.scrollTo({ top: 0, behavior: 'smooth' });
 }
@@ -156,7 +172,7 @@ function renderTop() {
     html += `<button class="chip red" data-act="myrole">${r.icon} دورك: ${esc(r.name)}</button>`;
   }
   if (s.me.isHost) html += `<span class="chip">👑 مضيف</span>`;
-  $('#topInfo').innerHTML = html;
+  if (html !== lastTopHtml) { $('#topInfo').innerHTML = html; lastTopHtml = html; }
 }
 
 // شريط أزرار المضيف
@@ -173,6 +189,7 @@ function playersMini() {
       return `<li class="${p.alive ? '' : 'dead'} ${p.id === s.me.id ? 'me' : ''} ${p.online ? '' : 'off'}">
         <span class="avatar">${p.alive ? initial(p.name) : '💀'}</span>
         <span class="nm">${esc(p.name)}${p.id === s.me.id ? ' (أنت)' : ''}</span>
+        ${p.voice ? '<span title="بالصوت">🎙️</span>' : ''}
         ${r ? `<span title="${esc(r.name)}">${r.icon}</span>` : ''}
         <span class="dot ${p.online ? 'on' : ''}"></span>
       </li>`;
@@ -234,6 +251,7 @@ function vLobby() {
         <li class="${p.id === s.me.id ? 'me' : ''} ${p.online ? '' : 'off'}">
           <span class="avatar">${initial(p.name)}</span>
           <span class="nm">${p.id === s.hostId ? '👑 ' : ''}${esc(p.name)}${p.id === s.me.id ? ' (أنت)' : ''}</span>
+          ${p.voice ? '<span title="بالصوت">🎙️</span>' : ''}
           <span class="dot ${p.online ? 'on' : ''}"></span>
           ${isHost && p.id !== s.me.id ? `<button class="x" title="طرد" data-act="kick" data-id="${p.id}">✕</button>` : ''}
         </li>`).join('')}</ul>
@@ -547,6 +565,26 @@ function showRules() {
     <p class="muted">4–5 لاعبين: 1 • 6–8: 2 • 9–11: 3 • 12–15: 4 • 16–20: 5<br>الأدوار الجانبية بتدخل تلقائياً: زعيم المافيا من 7، القناص من 8، العمدة من 9، المهرج من 10 (والمضيف بيقدر يختار يدوي).</p>`);
 }
 
+// اختيار فوري: بنعلّم الاختيار على الشاشة قبل ما يرد السيرفر
+async function pick(el, action, target) {
+  document.querySelectorAll(`[data-act="${el.dataset.act}"]`).forEach((b) => b.classList.remove('sel'));
+  el.classList.add('sel');
+  const r = await api(action, { target });
+  if (r.error) { lastMainHtml = ''; render(); }
+}
+// زر بيشتغل مرة وحدة لحد ما يرد السيرفر (ما في ضغطات مكررة)
+async function once(el, fn) {
+  if (busy) return;
+  busy = true;
+  el.disabled = true;
+  el.classList.add('loading');
+  try { await fn(); } finally {
+    busy = false;
+    el.disabled = false;
+    el.classList.remove('loading');
+  }
+}
+
 // ---------------- الأزرار (event delegation) ----------------
 document.addEventListener('click', async (e) => {
   const el = e.target.closest('[data-act]');
@@ -576,14 +614,14 @@ document.addEventListener('click', async (e) => {
     case 'side': return api('settings', { settings: { side: { [el.dataset.v]: !state.settings.side[el.dataset.v] } } });
     case 'reveal': return api('settings', { settings: { revealOnDeath: !state.settings.revealOnDeath } });
     case 'kick': if (confirm('تطرد ' + (P(id)?.name || '') + '؟')) api('kick', { target: id }); return;
-    case 'start': return api('start');
-    case 'ready': return api('ready');
-    case 'nightPick': return api('night', { target: id });
-    case 'startVote': return api('startVote');
-    case 'vote': return api('vote', { target: id });
-    case 'startNight': return api('startNight');
-    case 'force': return api('force');
-    case 'restart': return api('restart');
+    case 'start': return once(el, () => api('start'));
+    case 'ready': return once(el, () => api('ready'));
+    case 'nightPick': return pick(el, 'night', id);
+    case 'startVote': return once(el, () => api('startVote'));
+    case 'vote': return pick(el, 'vote', id);
+    case 'startNight': return once(el, () => api('startNight'));
+    case 'force': return once(el, () => api('force'));
+    case 'restart': return once(el, () => api('restart'));
     case 'leave': {
       if (!confirm('بدك تطلع من الغرفة؟')) return;
       await api('leave');
@@ -598,6 +636,20 @@ document.addEventListener('keydown', (e) => {
     doCreateOrJoin(e.target.id === 'codeIn' || $('#codeIn').value.trim() ? 'join' : 'create');
   }
 });
+
+// ---------------- حماية الاتصال ----------------
+function reconnect() { if (session) { $('#conn').classList.remove('hidden'); tryResume(); } }
+// إذا ما وصل إشي من السيرفر 40 ثانية، بنعيد الاتصال
+setInterval(() => { if (session && Date.now() - lastBeat > 40000) { lastBeat = Date.now(); reconnect(); } }, 5000);
+// لما ترجع للصفحة من تطبيق ثاني (واتساب مثلاً)
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && session && (!es || es.readyState !== 1 || Date.now() - lastBeat > 20000)) reconnect();
+});
+window.addEventListener('online', reconnect);
+// نبضة كل 4 دقايق عشان السيرفر المجاني ما ينام وإنتو بتلعبوا
+setInterval(() => {
+  if (session) fetch('/api', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'hb', ...session }) }).catch(() => {});
+}, 4 * 60 * 1000);
 
 // ---------------- البداية ----------------
 if (session) { renderHome(); tryResume(); }
