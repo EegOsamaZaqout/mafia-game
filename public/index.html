@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0a0a0a">
+  <title>مافيا — العب مع صحابك أونلاين</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔪</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&family=Reem+Kufi:wght@700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="bg-glow"></div>
+  <div id="app">
+    <header class="topbar">
+      <div class="logo">مافيا<span class="drop"></span></div>
+      <div id="topInfo"></div>
+    </header>
+
+    <div class="layout">
+      <main id="main"></main>
+
+      <aside id="chat" class="chat hidden">
+        <button class="chat-head" id="chatToggle" type="button">
+          <span id="chatTitle">💬 الدردشة</span>
+          <span id="chatBadge" class="badge hidden">0</span>
+        </button>
+        <div class="chat-body">
+          <div id="chatMsgs"></div>
+          <form id="chatForm" autocomplete="off">
+            <input id="chatInput" maxlength="200" placeholder="اكتب رسالة...">
+            <button type="submit" class="btn small">إرسال</button>
+          </form>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <div id="modal" class="modal hidden"><div class="modal-box" id="modalBox"></div></div>
+  <div id="toast" class="toast"></div>
+  <div id="conn" class="conn hidden">⏳ جاري إعادة الاتصال...</div>
+
+  <script src="app.js"></script>
+</body>
+</html>
