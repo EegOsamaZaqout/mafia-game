@@ -266,7 +266,7 @@ function card(p, o = {}) {
     p.id === s.me.id ? 'me' : '', p.online ? '' : 'off', o.sel ? 'sel' : ''].filter(Boolean).join(' ');
   const inner = `
     ${!face && r ? `<span class="corner" title="${esc(r.name)}">${r.icon}</span>` : ''}
-    ${p.voice ? '<span class="mic" title="بالصوت">🎙️</span>' : ''}
+    ${p.bot ? '<span class="mic" title="بوت">🤖</span>' : p.voice ? '<span class="mic" title="بالصوت">🎙️</span>' : ''}
     ${o.votes ? `<span class="votes">${o.votes}</span>` : ''}
     ${face ? `<span class="ini">${r.icon}</span><span class="rname">${esc(r.name)}</span>` : `<span class="ini">${p.alive || s.phase === 'lobby' ? initial(p.name) : '✝'}</span>`}
     ${o.who ? `<span class="who">${o.who}</span>` : ''}
@@ -284,6 +284,7 @@ function vLobby() {
   const n = s.players.length;
   const isHost = s.me.isHost;
   const st = s.settings;
+  const bots = s.players.filter((p) => p.bot).length;
   const counts = {};
   (s.rolePreview || []).forEach((r) => (counts[r] = (counts[r] || 0) + 1));
   const order = ['godfather', 'mafia', 'doctor', 'detective', 'sniper', 'mayor', 'jester', 'citizen'];
@@ -312,6 +313,11 @@ function vLobby() {
         <button class="btn line sm" data-act="copy">انسخ رابط الدعوة</button>
       </div>
       ${tableOf(s.players, (p) => card(p, { kick: isHost && p.id !== s.me.id }))}
+      ${isHost ? `<div class="botrow">
+        <button class="btn line sm" data-act="addBot" ${n >= s.maxPlayers ? 'disabled' : ''}>🤖 أضف بوت</button>
+        ${bots ? `<button class="btn line sm" data-act="removeBots">شيل البوتات (${bots})</button>` : ''}
+        <span class="hint">عددكم ناقص؟ ضيف بوتات. بيلعبوا لحالهم: بيختاروا بالليل وبيصوّتوا بالنهار.</span>
+      </div>` : bots ? `<p class="hint" style="margin-top:12px">🤖 في ${bots} ${bots === 1 ? 'بوت' : 'بوتات'} بالغرفة، بيلعبوا لحالهم.</p>` : ''}
       <div class="section"><h2>الأوراق بهالجولة${s.rolePreview ? ` (${n} لاعبين)` : ''}</h2>${lineup}</div>
       ${settings}`,
     dock: isHost
@@ -562,6 +568,7 @@ function showRules() {
     <p><b>بالنهار</b> بنعرف مين مات، بنتناقش، وبعدين بنصوّت مين يطلع. إذا تعادلت الأصوات، ما حدا بيطلع.</p>
     <p><b>المدينة بتفوز</b> لما تطلّع كل المافيا. <b>المافيا بتفوز</b> لما يصير عددهم قد الباقيين أو أكثر.</p>
     <p>كل مرحلة إلها وقت، ولما يخلص الوقت اللعبة بتكمّل لحالها. هيك ما حدا بيقدر يعطّلها.</p>
+    <p><b>عددكم ناقص؟</b> المضيف بيقدر يضيف بوتات 🤖 من اللوبي. البوت بياخد دور زي أي لاعب، وبيلعب لحاله.</p>
     <p style="color:var(--ash)">عدد المافيا: 1 لـ 4–5 لاعبين، 2 لـ 6–8، 3 لـ 9–11، 4 لـ 12–15، و5 لـ 16–20. الأدوار الجانبية بتدخل لحالها: زعيم المافيا من 7، القناص من 8، العمدة من 9، والمهرج من 10.</p>`);
 }
 
@@ -618,6 +625,8 @@ document.addEventListener('click', async (e) => {
     case 'side': return api('settings', { settings: { side: { [el.dataset.v]: !state.settings.side[el.dataset.v] } } });
     case 'reveal': return api('settings', { settings: { revealOnDeath: !state.settings.revealOnDeath } });
     case 'kick': if (confirm('تطرد ' + (P(id)?.name || '') + '؟')) api('kick', { target: id }); return;
+    case 'addBot': return once(el, () => api('addBot'));
+    case 'removeBots': return once(el, () => api('removeBots'));
     case 'start': return once(el, () => api('start'));
     case 'ready': return once(el, () => api('ready'));
     case 'nightPick': return pick(el, 'night', id);

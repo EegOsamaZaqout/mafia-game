@@ -210,6 +210,9 @@ label.fl { display: block; font-size: 14px; color: var(--ash); margin-bottom: 6p
 .switch.on::after { right: 23px; }
 .kick { position: absolute; top: 6px; left: 6px; z-index: 2; width: 24px; height: 24px; border-radius: 50%; border: none; background: var(--ink); color: var(--bone); cursor: pointer; font-size: 13px; line-height: 24px; }
 
+.botrow { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 14px; }
+.hint { color: var(--ash); font-size: 13.5px; }
+
 /* ---------- كشف الدور ---------- */
 .reveal { max-width: 320px; margin: 0 auto; perspective: 1200px; }
 .flip { position: relative; aspect-ratio: 5 / 7; transform-style: preserve-3d; transition: transform .8s cubic-bezier(.2,.8,.2,1); cursor: pointer; border: none; background: none; padding: 0; width: 100%; }

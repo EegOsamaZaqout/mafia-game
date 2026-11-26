@@ -35,6 +35,7 @@ const ROLES = {
 };
 const SIDE_ROLES = ['godfather', 'sniper', 'mayor', 'jester'];
 // مدة كل مرحلة بالثواني حسب سرعة اللعب اللي بيختارها المضيف
+const SCALE = Number(process.env.PACE_SCALE || 1); // للتجربة بس: بيسرّع المؤقتات
 const PACE = {
   fast:   { reveal: 20, night: 30, day: 90,  vote: 30, dusk: 6 },
   normal: { reveal: 30, night: 45, day: 150, vote: 45, dusk: 7 },
@@ -128,8 +129,153 @@ function removePlayer(room, id) {
   const set = room.clients.get(id);
   if (set) for (const res of set) { try { res.write('event: kicked\ndata: {}\n\n'); res.end(); } catch (e) {} }
   room.clients.delete(id);
-  if (room.hostId === id) room.hostId = room.players[0] ? room.players[0].id : null;
-  if (!room.players.length) { clearTimer(room); rooms.delete(room.code); }
+  // المضيف دايماً إنسان، مش بوت
+  if (room.hostId === id) { const h = room.players.find((x) => !x.isBot); room.hostId = h ? h.id : null; }
+  if (!room.players.some((x) => !x.isBot)) { clearTimer(room); rooms.delete(room.code); }
+}
+
+// ---------------- البوتات ----------------
+// لاعبين بيلعبوا لحالهم لما العدد ناقص. اختياري: المضيف بيضيفهم من اللوبي.
+const BOT_NAMES = [
+  'أبو صالح', 'أم خليل', 'سامر', 'رامي', 'ليان', 'ياسمين', 'خالد', 'نزار', 'جميلة', 'عبير',
+  'أبو العبد', 'أم محمد', 'طارق', 'هيا', 'باسل', 'رهف', 'يوسف', 'سلمى', 'أبو فادي', 'أم أحمد',
+  'مراد', 'دانة', 'حمزة', 'نور', 'زياد', 'تالا', 'أبو سمير', 'أم سعيد', 'معتز', 'لمى',
+  'وسيم', 'رغد', 'عمر', 'سارة', 'أبو عمر', 'أم يوسف', 'إياد', 'غيداء', 'قصي', 'بيسان',
+];
+const BOT_LINES = [
+  'أنا بريء والله، دوّروا على غيري',
+  'في حدا ساكت كثير... مش مريح',
+  '{x} حركاته مش طبيعية اليوم',
+  'خلّينا نصوّت بعقل، مش عالعشوائي',
+  'أنا شاكك بـ {x}',
+  'مين اللي بيدافع عن {x} كثير؟',
+  'ما معي دليل، بس {x} مش مريحني',
+  'أنا معكم، بس لا تتسرعوا بالتصويت',
+  'إمبارح الليل كان غريب... {x} وين كان؟',
+  'والله لو طلّعتوني رح تندموا 😅',
+];
+const pickOne = (arr) => arr[crypto.randomInt(arr.length)];
+
+function addBot(room) {
+  if (room.phase !== 'lobby') throw 'بس قبل ما تبدأ اللعبة';
+  if (room.players.length >= MAX_PLAYERS) throw 'الغرفة مليانة';
+  const used = new Set(room.players.map((x) => x.name));
+  const pool = BOT_NAMES.filter((n) => !used.has(n));
+  if (!pool.length) throw 'خلصت أسامي البوتات';
+  const b = addPlayer(room, pickOne(pool), '');
+  b.isBot = true;
+  sys(room, `🤖 ${b.name} انضم للغرفة (بوت)`);
+}
+
+// بنأجّل حركة البوت شوي عشان تبيّن طبيعية، وبنلغيها إذا المرحلة تغيّرت
+function botLater(room, frac0, frac1, fn) {
+  const sec = PACE[room.settings.pace][({ reveal: 'reveal', night: 'night', day: 'day', vote: 'vote', dusk: 'dusk' })[room.phase]] * SCALE;
+  const ms = sec * 1000 * (frac0 + Math.random() * (frac1 - frac0));
+  const stamp = room.phase + ':' + room.day;
+  setTimeout(() => {
+    if (!rooms.has(room.code) || room.phase + ':' + room.day !== stamp) return;
+    try { fn(); } catch (e) { /* حركة غير صالحة — بنتجاهلها */ }
+    if (rooms.has(room.code)) broadcast(room);
+  }, ms);
+}
+
+function mostCommon(list) {
+  const t = {};
+  list.forEach((x) => (t[x] = (t[x] || 0) + 1));
+  const { top } = topOf(t);
+  return top.length ? pickOne(top) : null;
+}
+
+function botNight(room, b) {
+  if (room.phase !== 'night' || !b.alive || b.id in room.night.choices) return;
+  const a = alive(room);
+  const others = a.filter((x) => x.id !== b.id);
+  let t = null;
+  if (teamOf(b) === 'mafia') {
+    // البوت المافيا بيمشي ورا اختيار شركاؤه، وإذا ما اختاروا بيختار لحاله
+    const mates = a.filter((x) => teamOf(x) === 'mafia' && x.id !== b.id);
+    const picks = mates.map((m) => room.night.choices[m.id]).filter((x) => x && x !== 'skip');
+    const targets = a.filter((x) => teamOf(x) !== 'mafia');
+    if (!targets.length) return;
+    t = picks.length ? mostCommon(picks) : pickOne(targets).id;
+  } else if (b.role === 'doctor') {
+    t = !room.doctorSelfUsed && Math.random() < 0.3 ? b.id : pickOne(others).id;
+  } else if (b.role === 'detective') {
+    const checked = new Set(b.notes.map((n) => n.name));
+    const fresh = others.filter((x) => !checked.has(x.name));
+    t = pickOne(fresh.length ? fresh : others).id;
+  } else if (b.role === 'sniper') {
+    t = room.day >= 2 && Math.random() < 0.2 ? pickOne(others).id : 'skip';
+  } else return;
+  nightAction(room, b, t);
+}
+
+function leading(room, ok) {
+  const t = {};
+  for (const v of Object.values(room.votes)) if (ok(v)) t[v] = (t[v] || 0) + 1;
+  const { top } = topOf(t);
+  return top.length ? pickOne(top) : null;
+}
+
+function botVote(room, b) {
+  if (room.phase !== 'vote' || !b.alive || b.id in room.votes) return;
+  const others = alive(room).filter((x) => x.id !== b.id);
+  if (!others.length) return;
+  let t;
+  if (teamOf(b) === 'mafia') {
+    const town = others.filter((x) => teamOf(x) !== 'mafia');
+    const lead = leading(room, (id) => town.some((x) => x.id === id));
+    t = lead && Math.random() < 0.7 ? lead : town.length ? pickOne(town).id : 'skip';
+  } else {
+    const known = b.role === 'detective' && b.notes.filter((n) => n.result === 'mafia').map((n) => others.find((x) => x.name === n.name)).find(Boolean);
+    const claimed = (room.claims || []).map((id) => others.find((x) => x.id === id)).find(Boolean);
+    if (known) t = known.id;
+    else if (claimed && Math.random() < 0.8) t = claimed.id;
+    else {
+      const r = Math.random();
+      const lead = leading(room, (id) => id !== b.id && id !== 'skip');
+      t = r < 0.05 ? 'skip' : lead && r < 0.85 ? lead : pickOne(others).id;
+    }
+  }
+  castVote(room, b, t);
+}
+
+function botChat(room, b) {
+  if (!b.alive || !['day', 'vote'].includes(room.phase)) return;
+  if (b.role === 'detective') {
+    // المحقق البوت إذا لقى مافيا بيحكيها قدام الكل
+    const hit = b.notes.filter((n) => n.result === 'mafia').map((n) => alive(room).find((x) => x.name === n.name)).find(Boolean);
+    if (hit && !(room.claims || []).includes(hit.id)) {
+      (room.claims = room.claims || []).push(hit.id);
+      pushChat(room, { ch: 'public', from: b.name, text: `أنا المحقق، وفحصت ${hit.name}: طلع مافيا! صوّتوا عليه` });
+      return;
+    }
+  }
+  const pool = alive(room).filter((x) => x.id !== b.id && (teamOf(b) !== 'mafia' || teamOf(x) !== 'mafia'));
+  if (!pool.length) return;
+  pushChat(room, { ch: 'public', from: b.name, text: pickOne(BOT_LINES).replace('{x}', pickOne(pool).name) });
+}
+
+// بداية كل مرحلة: البوتات بيبرمجوا حركتهم
+function scheduleBots(room, key) {
+  const bots = room.players.filter((x) => x.isBot);
+  if (!bots.length) return;
+  if (key === 'reveal') {
+    botLater(room, 0.05, 0.15, () => {
+      bots.forEach((x) => { x.ready = true; });
+      if (room.players.every((x) => x.ready)) startNight(room);
+    });
+  } else if (key === 'night') {
+    bots.forEach((b) => { if (b.alive) botLater(room, 0.15, 0.55, () => botNight(room, b)); });
+  } else if (key === 'day') {
+    bots.forEach((b) => {
+      if (!b.alive) return;
+      if (b.role === 'detective') botLater(room, 0.05, 0.3, () => botChat(room, b));
+      else if (Math.random() < 0.5) botLater(room, 0.1, 0.7, () => botChat(room, b));
+    });
+  } else if (key === 'vote') {
+    bots.forEach((b) => { if (b.alive) botLater(room, 0.15, 0.6, () => botVote(room, b)); });
+  }
 }
 
 // ---------------- المؤقتات ----------------
@@ -139,11 +285,12 @@ function clearTimer(room) {
 }
 function setTimer(room, key) {
   clearTimeout(room.timer);
-  const sec = PACE[room.settings.pace][key];
+  const sec = PACE[room.settings.pace][key] * SCALE;
   room.phaseTotal = sec;
   room.deadline = Date.now() + sec * 1000;
   const stamp = room.phase + ':' + room.day;
   room.timer = setTimeout(() => onTimeout(room, stamp), sec * 1000);
+  scheduleBots(room, key);
 }
 // لما يخلص الوقت بننقل المرحلة لحالها — ما حدا بيقدر يعطّل اللعبة
 function onTimeout(room, stamp) {
@@ -161,6 +308,7 @@ function addLog(room, icon, text) { room.log.push({ day: room.day, icon, text })
 function startGame(room) {
   const roles = shuffle(buildRoles(room.players.length, room.settings));
   room.roleList = roles.slice();
+  room.claims = []; // اتهامات المحقق البوت (أسامي لاعبين)
   room.players.forEach((p, i) => { p.role = roles[i]; p.alive = true; p.ready = false; p.notes = []; });
   Object.assign(room, {
     phase: 'reveal', day: 0, night: null, votes: {}, lastEvent: null, winner: null, winnerId: null,
@@ -324,7 +472,7 @@ function checkWin(room) {
 }
 
 function backToLobby(room) {
-  room.players = room.players.filter((p) => p.conns > 0 || p.id === room.hostId);
+  room.players = room.players.filter((p) => p.conns > 0 || p.id === room.hostId || p.isBot);
   room.players.forEach((p) => { p.role = null; p.alive = true; p.ready = false; p.notes = []; });
   clearTimer(room);
   Object.assign(room, { phase: 'lobby', day: 0, night: null, votes: {}, lastEvent: null, winner: null, winnerId: null, chat: [], log: [], roleList: [] });
@@ -360,7 +508,7 @@ function view(room, p) {
   const players = room.players.map((q) => {
     let role = null;
     if (inGame && q.role && (q.id === p.id || omni || (myTeam === 'mafia' && teamOf(q) === 'mafia') || (!q.alive && room.settings.revealOnDeath))) role = q.role;
-    return { id: q.id, name: q.name, alive: q.alive, online: q.conns > 0, ready: q.ready, voice: q.voice && q.conns > 0, role };
+    return { id: q.id, name: q.name, alive: q.alive, online: q.isBot || q.conns > 0, bot: !!q.isBot, ready: q.ready, voice: q.voice && q.conns > 0, role };
   });
 
   let night = null;
@@ -469,6 +617,14 @@ function handleAction(body) {
       if (s.side) for (const r of SIDE_ROLES) if (r in s.side) room.settings.side[r] = !!s.side[r];
       if ('revealOnDeath' in s) room.settings.revealOnDeath = !!s.revealOnDeath;
       if (s.pace in PACE) room.settings.pace = s.pace;
+      break;
+    }
+    case 'addBot': { hostOnly(); addBot(room); break; }
+    case 'removeBots': {
+      hostOnly();
+      if (room.phase !== 'lobby') throw 'بس قبل ما تبدأ اللعبة';
+      room.players.filter((x) => x.isBot).forEach((x) => removePlayer(room, x.id));
+      sys(room, '🤖 المضيف شال البوتات');
       break;
     }
     case 'kick': {
