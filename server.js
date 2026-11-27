@@ -176,7 +176,9 @@ function addBot(room) {
 // =====================================================
 const AI = (() => {
   const KEY = process.env.GEMINI_API_KEY || '';
-  const MODEL = process.env.GEMINI_MODEL || 'gemini-flash-latest';
+  // الأسرع أول، وإذا ما زبط بنجرّب اللي بعده
+  const MODELS = (process.env.GEMINI_MODEL || 'gemini-flash-lite-latest,gemini-flash-latest,gemini-2.5-flash-lite').split(',').map((m) => m.trim()).filter(Boolean);
+  let modelIdx = 0;
   const MOCK = process.env.GEMINI_MOCK === '1';
   const PER_MIN = Number(process.env.GEMINI_PER_MIN || 8);
   let stamps = [];
@@ -221,25 +223,39 @@ const AI = (() => {
 
   async function call(text) {
     if (MOCK) return { say: 'والله أنا شايف إنه في حدا ساكت كثير، خلّينا نركّز', suspect: '' };
+    let lastErr;
+    for (let tries = 0; tries < MODELS.length; tries++) {
+      const model = MODELS[modelIdx % MODELS.length];
+      try { return await callModel(model, text); }
+      catch (e) {
+        lastErr = e;
+        if (String(e.message).startsWith('429')) throw e;
+        modelIdx++; // جرّب الموديل اللي بعده
+      }
+    }
+    throw lastErr;
+  }
+
+  async function callModel(model, text) {
     const ctl = new AbortController();
-    const to = setTimeout(() => ctl.abort(), 9000);
+    const to = setTimeout(() => ctl.abort(), 20000);
     try {
-      const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(MODEL)}:generateContent`, {
+      const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
         method: 'POST',
         signal: ctl.signal,
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': KEY },
         body: JSON.stringify({
           contents: [{ role: 'user', parts: [{ text }] }],
-          generationConfig: { temperature: 0.9, maxOutputTokens: 200, responseMimeType: 'application/json' },
+          generationConfig: { temperature: 0.9, maxOutputTokens: 1024, responseMimeType: 'application/json' },
         }),
       });
       if (r.status === 429) { pauseUntil = Date.now() + 10 * 60 * 1000; throw new Error('429 rate limit'); }
-      if (!r.ok) { pauseUntil = Date.now() + 2 * 60 * 1000; throw new Error('HTTP ' + r.status + ' ' + (await r.text()).slice(0, 200)); }
+      if (!r.ok) throw new Error(model + ' HTTP ' + r.status + ' ' + (await r.text()).slice(0, 200));
       const j = await r.json();
       const raw = (((j.candidates || [])[0] || {}).content || {}).parts?.map((p) => p.text || '').join('') || '';
       const m = raw.match(/\{[\s\S]*\}/);
       const o = m ? JSON.parse(m[0]) : null;
-      if (!o || typeof o.say !== 'string') throw new Error('bad output');
+      if (!o || typeof o.say !== 'string') throw new Error(model + ' bad output: ' + raw.slice(0, 120));
       return { say: o.say.replace(/\s+/g, ' ').trim().slice(0, 160), suspect: String(o.suspect || '').trim() };
     } finally { clearTimeout(to); }
   }
@@ -259,7 +275,21 @@ const AI = (() => {
     }
   }
 
-  return { ready, talk, enabled: () => !!(KEY || MOCK), status: () => ({ enabled: !!(KEY || MOCK), paused: Date.now() < pauseUntil, ...stats, lastError }) };
+  // فحص سريع بطلب واحد (ما بيبيّن المفتاح)
+  let lastTest = 0;
+  async function test() {
+    if (!KEY && !MOCK) return { ok: false, error: 'ما في GEMINI_API_KEY' };
+    if (Date.now() - lastTest < 20000) return { ok: false, error: 'استنى 20 ثانية بين كل فحص' };
+    lastTest = Date.now();
+    const t0 = Date.now();
+    try {
+      const r = await call('إنت لاعب بلعبة المافيا. رجّع JSON بس: {"say": "جملة قصيرة بلهجة فلسطينية بتشك فيها بلاعب اسمه سامر", "suspect": "سامر"}');
+      pauseUntil = 0;
+      return { ok: true, model: MODELS[modelIdx % MODELS.length], ms: Date.now() - t0, sample: r };
+    } catch (e) { return { ok: false, model: MODELS[modelIdx % MODELS.length], ms: Date.now() - t0, error: String(e.message || e).slice(0, 300) }; }
+  }
+
+  return { ready, talk, test, enabled: () => !!(KEY || MOCK), status: () => ({ enabled: !!(KEY || MOCK), model: MODELS[modelIdx % MODELS.length], paused: Date.now() < pauseUntil, ...stats, lastError }) };
 })();
 
 // بنأجّل حركة البوت شوي عشان تبيّن طبيعية، وبنلغيها إذا المرحلة تغيّرت
@@ -1183,6 +1213,7 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === '/events') return handleEvents(req, res, url);
   if (url.pathname === '/ice') return sendJson(res, 200, await getIceServers());
   if (url.pathname === '/ai-status') return sendJson(res, 200, AI.status());
+  if (url.pathname === '/ai-test') return sendJson(res, 200, await AI.test());
   if (url.pathname === '/api' && req.method === 'POST') {
     try {
       const body = JSON.parse((await readBody(req)) || '{}');
