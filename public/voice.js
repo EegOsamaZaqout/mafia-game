@@ -39,11 +39,17 @@ const Voice = (() => {
   // ---------- مين بيسمع مين ----------
   const isMafia = (role) => !!(role && st.roles[role] && st.roles[role].team === 'mafia');
   const open = () => st.phase === 'lobby' || st.phase === 'ended';
-  const hushed = (id) => st.silenced === id && ['day', 'vote', 'dusk', 'revenge'].includes(st.phase);
+  const hushed = (id) => st.silenced === id && ['day', 'vote', 'defense', 'revote', 'dusk', 'revenge'].includes(st.phase);
+  // النقاش بالدور: بس اللي دوره بيحكي، والتصويت بصمت
+  const turnPhase = () => ['day', 'defense'].includes(st.phase);
+  const quietPhase = () => ['vote', 'revote'].includes(st.phase);
+  const speaker = () => st.turn && st.turn.speaker;
   function canSpeakTo(o) {
     const me = st.me;
     if (open()) return true;
     if (hushed(me.id)) return false; // المافيا سكّتوك
+    if (me.alive && turnPhase()) return speaker() === me.id;
+    if (me.alive && quietPhase()) return false;
     if (!me.alive) return !o.alive;
     if (st.phase === 'night') return isMafia(me.role) && (!o.alive || isMafia(o.role));
     return true;
@@ -52,6 +58,8 @@ const Voice = (() => {
     const me = st.me;
     if (open()) return true;
     if (hushed(o.id)) return false;
+    if (o.alive && turnPhase()) return speaker() === o.id;
+    if (o.alive && quietPhase()) return false;
     if (!o.alive) return !me.alive;
     if (st.phase === 'night') return me.alive ? isMafia(me.role) && isMafia(o.role) : isMafia(o.role);
     return true;
@@ -283,6 +291,8 @@ const Voice = (() => {
     if (!me.alive) return st.phase === 'night' ? '👻 بتحكي مع الأموات، وبتسمع المافيا' : '👻 بتحكي مع الأموات بس، وبتسمع الكل';
     if (st.phase === 'night') return isMafia(me.role) ? '🔪 الليل: بتحكي مع المافيا بس' : '🌙 الليل: الصوت مقفول... نام 😴';
     if (hushed(me.id)) return '🤐 مافيا التسكيت سكّتك، صوتك مقفول اليوم';
+    if (turnPhase()) return speaker() === me.id ? '🎤 دورك! المايك مفتوح للكل' : '🔇 بس اللي دوره بيحكي';
+    if (quietPhase()) return '🤫 التصويت بصمت';
     return '☀️ الكل بيسمع الكل';
   }
 

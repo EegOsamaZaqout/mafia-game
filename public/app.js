@@ -183,6 +183,8 @@ function phaseCurtain(s) {
     case 'night': return curtain('حلّ الليل', 'الليلة ' + ord(s.day, ORD));
     case 'day': return curtain('طلع الصبح', 'اليوم ' + ord(s.day, DAYORD));
     case 'vote': return curtain('التصويت', 'مين لازم يطلع؟');
+    case 'defense': return curtain('التبرير', (s.accused || []).map((id) => (P(id) || {}).name).join(' و '));
+    case 'revote': return curtain('إعادة التصويت', 'غيّر أو ثبّت');
     case 'dusk': return curtain('المغرب', s.lastEvent && s.lastEvent.out ? `طلع ${s.lastEvent.out.name}` : 'ما حدا طلع');
     case 'revenge': return curtain('الولد الصالح', 'بيختار مين يطلع معه', true);
     case 'ended': {
@@ -202,7 +204,7 @@ function iWon() {
 function render() {
   if (!state) return;
   const s = state;
-  const key = s.phase + ':' + s.day;
+  const key = s.phase + ':' + s.day + ':' + ((s.accused || []).join(','));
   if (key !== lastPhaseKey) {
     if (lastPhaseKey) {
       phaseCurtain(s);
@@ -220,7 +222,7 @@ function render() {
   $('#sideToggle').classList.remove('hidden');
   $('#clock').classList.remove('hidden');
 
-  const views = { lobby: vLobby, reveal: vReveal, night: vNight, day: vDay, vote: vVote, dusk: vDusk, revenge: vRevenge, ended: vEnded };
+  const views = { lobby: vLobby, reveal: vReveal, night: vNight, day: vDay, vote: vVote, defense: vDefense, revote: vRevote, dusk: vDusk, revenge: vRevenge, ended: vEnded };
   const v = (views[s.phase] || vLobby)();
   put(main, 'main', v.main);
   put($('#dock'), 'dock', v.dock || '');
@@ -265,11 +267,12 @@ function card(p, o = {}) {
   const r = p.role ? R(p.role) : null;
   const face = !!r && (p.id === s.me.id || !p.alive || s.phase === 'ended' || o.showRole || p.id === s.mayorRevealed);
   const cls = ['card', face ? 'face' : '', face && r.team === 'mafia' ? 'mafia' : '', p.alive || s.phase === 'lobby' ? '' : 'dead',
-    p.id === s.me.id ? 'me' : '', p.online ? '' : 'off', o.sel ? 'sel' : ''].filter(Boolean).join(' ');
+    p.id === s.me.id ? 'me' : '', p.online ? '' : 'off', o.sel ? 'sel' : '', o.cls || ''].filter(Boolean).join(' ');
   const inner = `
     ${!face && r ? `<span class="corner" title="${esc(r.name)}">${r.icon}</span>` : ''}
     ${p.bot ? '<span class="mic" title="بوت">🤖</span>' : p.voice ? '<span class="mic" title="بالصوت">🎙️</span>' : ''}
-    ${s.silenced === p.id && ['day', 'vote', 'dusk', 'revenge'].includes(s.phase) && p.alive ? '<span class="hush" title="مسكَّت اليوم">🤐</span>' : ''}
+    ${s.silenced === p.id && ['day', 'vote', 'defense', 'revote', 'dusk', 'revenge'].includes(s.phase) && p.alive ? '<span class="hush" title="مسكَّت اليوم">🤐</span>' : ''}
+    ${o.order ? `<span class="order">${o.order}</span>` : ''}
     ${o.votes ? `<span class="votes">${o.votes}</span>` : ''}
     ${face ? `<span class="ini">${r.icon}</span><span class="rname">${esc(r.name)}</span>` : `<span class="ini">${p.alive || s.phase === 'lobby' ? initial(p.name) : '✝'}</span>`}
     ${o.who ? `<span class="who">${o.who}</span>` : ''}
@@ -295,7 +298,7 @@ function vLobby() {
     ? `<div class="lineup">${order.filter((r) => counts[r]).map((r) => `<span class="lu ${R(r).team === 'mafia' ? 'mafia' : ''}">${R(r).icon} ${esc(R(r).name)} <span class="n">${counts[r]}</span></span>`).join('')}</div>`
     : `<p class="muted" style="color:var(--ash)">بدكم ${s.minPlayers} لاعبين على الأقل. ضايل ${s.minPlayers - n}.</p>`;
   const pc = s.pace[st.pace];
-  const paceHint = `الليل ${pc.night} ث • النقاش ${Math.round(pc.day / 60 * 10) / 10} د • التصويت ${pc.vote} ث`;
+  const paceHint = `الليل ${pc.night} ث • دور الحكي دقيقة • التصويت ${pc.vote} ث`;
 
   const settings = isHost ? `
     <div class="section"><h2>الإعدادات</h2>
@@ -479,17 +482,82 @@ function mayorBtn() {
 }
 const hushedMe = () => state.silenced === state.me.id && state.me.alive;
 
+// رقم دور كل لاعب بالنقاش، وإذا هو اللي عم يحكي هلأ
+function turnInfo(p) {
+  const t = state.turn;
+  if (!t) return {};
+  const i = t.queue.indexOf(p.id);
+  if (i < 0) return {};
+  if (t.speaker === p.id) return { order: '🎤', cls: 'speaking' };
+  return { order: i < t.idx ? '✓' : String(i + 1), cls: i < t.idx ? 'spoke' : '' };
+}
+const nameOf = (id) => esc((P(id) || {}).name || '');
+
+function speakerDock(kind) {
+  const s = state;
+  const t = s.turn || {};
+  const mine = t.speaker === s.me.id;
+  let html = '';
+  if (mine) html += `<button class="btn red" data-act="endTurn">${kind === 'defense' ? 'خلصت تبريري' : 'خلصت كلامي'}</button><span class="msg">دورك هلأ! احكي بالصوت أو اكتب. إلك دقيقة.</span>`;
+  else html += `<span class="msg">${t.speaker ? `🎤 دور <b>${nameOf(t.speaker)}</b>${kind === 'defense' ? ' يبرر' : ' يحكي'}. الكل ساكت.` : ''}${!s.me.alive ? ' (إنت طالع من اللعبة)' : hushedMe() ? ' (إنت مسكَّت اليوم 🤐)' : ''}</span>`;
+  html += mayorBtn();
+  if (s.me.isHost && !mine && t.speaker) html += `<button class="btn line sm" data-act="skipTurn">تخطّي الدور</button>`;
+  if (s.me.isHost && kind === 'talk') html += `<button class="btn line sm" data-act="startVote">ابدأ التصويت الآن</button>`;
+  return html;
+}
+
 function vDay() {
   const s = state;
-  const status = !s.me.alive ? 'إنت طالع من اللعبة، بتتفرج بس' : hushedMe() ? 'مافيا التسكيت سكّتك 🤐 ما بتحكي اليوم، بس بتصوّت عادي' : 'وقت النقاش';
+  const t = s.turn || { queue: [], idx: 0 };
+  const left = Math.max(0, t.queue.length - t.idx - 1);
   return {
     main: `
-      <div class="stage"><h1>صباح اليوم ${ord(s.day, DAYORD)}</h1><p>ناقشوا مين بتشكّوا فيه. التصويت بيبلش لحاله لما يخلص الوقت.</p></div>
+      <div class="stage"><h1>صباح اليوم ${ord(s.day, DAYORD)}</h1><p>النقاش بالدور: كل واحد بيحكي مرة وحدة والباقي ساكتين. ${left ? `ضايل ${left} بعد اللي عم يحكي.` : 'هاد آخر واحد، وبعده التصويت.'}</p></div>
       ${morning()}
-      ${tableOf(s.players, (p) => card(p, { showRole: mafiaMate(p) }))}`,
-    dock: (s.me.isHost ? `<button class="btn red" data-act="startVote">ابدأ التصويت الآن</button><button class="btn line" data-act="extend">زيد 30 ثانية</button>` : '')
-      + mayorBtn()
-      + (s.me.isHost ? '' : `<span class="msg">${status}</span>`),
+      ${tableOf(s.players, (p) => card(p, Object.assign({ showRole: mafiaMate(p) }, turnInfo(p))))}`,
+    dock: speakerDock('talk'),
+  };
+}
+
+// التبرير: اللي عليه أكثر أصوات بيحكي مرة وحدة
+function vDefense() {
+  const s = state;
+  const accused = s.accused || [];
+  const votes = s.votes || {};
+  const w = (id) => (id === s.mayorRevealed ? 3 : 1);
+  const counts = {};
+  Object.entries(votes).forEach(([v, x]) => (counts[x] = (counts[x] || 0) + w(v)));
+  return {
+    main: `
+      <div class="stage"><h1>التبرير</h1><p>${accused.map(nameOf).join(' و ')} ${accused.length > 1 ? 'عليهم' : 'عليه'} أكثر أصوات. كل واحد بيبرر مرة وحدة، وبعدين بتقدروا تغيّروا أصواتكم.</p></div>
+      ${tableOf(s.players, (p) => card(p, Object.assign({ showRole: mafiaMate(p), votes: counts[p.id], cls: accused.includes(p.id) ? 'accused' : '' }, turnInfo(p))))}`,
+    dock: speakerDock('defense'),
+  };
+}
+
+// إعادة التصويت: كل واحد بيغيّر أو بيثبّت
+function vRevote() {
+  const s = state;
+  const votes = s.votes || {};
+  const done = s.revoteDone || [];
+  const alive = s.players.filter((p) => p.alive);
+  const my = votes[s.me.id];
+  const w = (id) => (id === s.mayorRevealed ? 3 : 1);
+  const counts = {};
+  Object.entries(votes).forEach(([v, x]) => (counts[x] = (counts[x] || 0) + w(v)));
+  const votersOf = (id) => Object.entries(votes).filter(([, x]) => x === id).map(([v]) => nameOf(v) + (w(v) > 1 ? ' ×3' : '')).join('، ');
+  const iDone = done.includes(s.me.id);
+  return {
+    main: `
+      <div class="stage"><h1>بدك تغيّر صوتك؟</h1><p>${done.length} من ${alive.length} قرروا. إذا حدا ثاني صار عليه أصوات أكثر بيبرر هو، وإذا ما حدا غيّر بيطلع اللي عليه أكثر أصوات.</p></div>
+      ${tableOf(s.players, (p) => p.alive
+        ? card(p, { act: 'vote', disabled: !s.me.alive || p.id === s.me.id, sel: my === p.id, votes: counts[p.id], who: votersOf(p.id), showRole: mafiaMate(p), cls: (s.accused || []).includes(p.id) ? 'accused' : '' })
+        : card(p))}`,
+    dock: !s.me.alive ? `<span class="msg">اللي طالع من اللعبة ما بيصوّت</span>`
+      : `<button class="btn ${iDone && my !== 'skip' ? 'on' : 'red'}" data-act="keepVote" ${iDone ? 'disabled' : ''}>${iDone ? '✓ ثبّتت' : (my ? 'ثبّت صوتي' : 'ما بدي أصوّت')}</button>
+         <button class="btn ${my === 'skip' ? 'on' : 'line'}" data-act="vote" data-id="skip">تخطّي</button>
+         ${mayorBtn()}
+         <span class="msg">${my && my !== 'skip' ? `صوتك على <b>${nameOf(my)}</b>. اضغط ورقة ثانية لتغيّر.` : 'اضغط ورقة لتصوّت.'}</span>`,
   };
 }
 
@@ -602,12 +670,17 @@ function renderChat() {
   const ch = s.chatChannel;
   const titles = { public: 'الكل بيشوف هالدردشة', mafia: 'دردشة المافيا، ما حدا غيركم بيشوفها', dead: 'دردشة الأموات' };
   const t = $('#chatTitle');
-  const hushed = s.silenced === s.me.id && ['day', 'vote', 'dusk', 'revenge'].includes(s.phase);
-  t.textContent = ch ? titles[ch] : hushed ? 'المافيا سكّتوك اليوم، ما بتقدر تكتب' : 'الدردشة مقفلة بالليل';
+  const hushed = s.silenced === s.me.id && ['day', 'vote', 'defense', 'revote', 'dusk', 'revenge'].includes(s.phase);
+  const tk = s.turn && s.turn.speaker;
+  t.textContent = ch ? (tk === s.me.id ? '🎤 دورك! اكتب أو احكي' : titles[ch])
+    : hushed ? 'مافيا التسكيت سكّتك اليوم، ما بتقدر تكتب'
+    : s.phase === 'night' ? 'الدردشة مقفلة بالليل'
+    : ['vote', 'revote'].includes(s.phase) ? 'التصويت بصمت'
+    : tk ? `🎤 دور ${(P(tk) || {}).name || ''} يحكي، الكل ساكت` : 'الدردشة مقفلة';
   t.className = 'chan' + (ch === 'mafia' ? ' mafia' : '');
   const input = $('#chatInput');
   input.disabled = !ch;
-  input.placeholder = ch ? (ch === 'mafia' ? 'خططوا بالسر' : 'اكتب رسالة') : hushed ? 'مسكَّت 🤐' : 'نايمين، ما في حكي';
+  input.placeholder = ch ? (ch === 'mafia' ? 'خططوا بالسر' : 'اكتب رسالة') : hushed ? 'مسكَّت 🤐' : s.phase === 'night' ? 'نايمين، ما في حكي' : 'استنى دورك';
 
   const newest = s.chat.length ? s.chat[s.chat.length - 1].id : 0;
   if (newest === lastChatId) return;
@@ -615,10 +688,18 @@ function renderChat() {
   const near = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
   const added = lastChatId ? s.chat.filter((m) => m.id > lastChatId && m.ch !== 'system').length : 0;
   lastChatId = newest;
-  const tag = { mafia: 'مافيا: ', dead: 'ميت: ' };
-  box.innerHTML = s.chat.map((m) => m.ch === 'system'
-    ? `<div class="msg system">${esc(m.text)}</div>`
-    : `<div class="msg ${m.ch} ${m.from === s.me.name ? 'me' : ''}"><b>${tag[m.ch] || ''}${esc(m.from)}</b>${esc(m.text)}</div>`).join('');
+  const tag = { mafia: '🔪 ', dead: '👻 ' };
+  let prev = null;
+  box.innerHTML = s.chat.map((m) => {
+    if (m.ch === 'system') { prev = null; return `<div class="cmsg system">${esc(m.text)}</div>`; }
+    const mine = m.from === s.me.name;
+    const same = prev && prev.from === m.from && prev.ch === m.ch; // رسائل ورا بعض من نفس الشخص: بلا اسم
+    prev = m;
+    const bot = (s.players.find((p) => p.name === m.from) || {}).bot;
+    return `<div class="cmsg ${m.ch} ${mine ? 'me' : ''} ${same ? 'cont' : ''}">
+      ${same || mine ? '' : `<div class="from" style="color:${nameColor(m.from)}">${tag[m.ch] || ''}${esc(m.from)}${bot ? ' <span class="bt">🤖</span>' : ''}</div>`}
+      <div class="txt">${esc(m.text)}</div></div>`;
+  }).join('');
   if (near || added) box.scrollTop = box.scrollHeight;
   if (added && (!sideOpen() || curTab !== 'chat')) { unread += added; updateBadges(); }
 }
@@ -632,6 +713,14 @@ $('#chatForm').addEventListener('submit', async (e) => {
   await api('chat', { text });
 });
 
+// لون ثابت لكل لاعب بالدردشة
+const NAME_COLORS = ['#FF8A80', '#FFD180', '#B9F6CA', '#80D8FF', '#EA80FC', '#FFFF8D', '#A7FFEB', '#FF9E80', '#CFD8DC', '#F48FB1', '#B388FF', '#CCFF90'];
+function nameColor(n) {
+  let h = 0;
+  for (const ch of String(n)) h = (h * 31 + ch.codePointAt(0)) >>> 0;
+  return NAME_COLORS[h % NAME_COLORS.length];
+}
+
 // ---------------- النوافذ ----------------
 function openModal(html) {
   $('#modalBox').innerHTML = html + `<div style="margin-top:16px"><button class="btn line wide" data-act="closeModal">سكّر</button></div>`;
@@ -644,7 +733,7 @@ function showRules() {
     <h2>كيف بنلعب؟</h2>
     <p>كل واحد بياخد كرت فيه دور سري. المافيا بيعرفوا بعض، والصالحين ما بيعرفوا مين مين.</p>
     <p><b>بالليل:</b> شيخ المافيا بيختار مين يغتال، ومافيا التسكيت بيختار مين يسكّت، والإسعاف بيتوقع مين رح ينغتال، والقناص بيقرر إذا بدو يطلق رصاصته.</p>
-    <p><b>بالنهار:</b> بنعرف مين طلع، بنتناقش، وبعدين بنصوّت. اللي عليه أكثر أصوات بيطلع وبينكشف كرته، وإذا تعادلت الأصوات ما حدا بيطلع.</p>
+    <p><b>بالنهار:</b> كل واحد بيحكي مرة وحدة بدوره (دقيقة)، والدور بيبلش من اللي بعد المسكوت. بعدين التصويت. اللي عليه أكثر أصوات بيبرر مرة وحدة، وبعدين اللي بده يغيّر صوته بيغيّر: إذا صار حدا ثاني عليه أكثر بيبرر هو، وإذا ما حدا غيّر بيطلع وبينكشف كرته. إذا تعادلوا بيبرروا الاثنين، وإذا ضل تعادل ما حدا بيطلع.</p>
     <p><b>الفوز:</b> الصالحين بيفوزوا لما تطلع كل المافيا. المافيا بيفوزوا لما يصير عدد الصالحين قد عددهم.</p>
     <h3 style="margin-top:14px">الأدوار</h3>
     ${['shaykh', 'silencer', 'mafia', 'mayor', 'goodboy', 'medic', 'sniper', 'citizen'].map((k) => {
@@ -723,7 +812,9 @@ document.addEventListener('click', async (e) => {
     case 'revenge': if (confirm('تاخد ' + (P(id)?.name || '') + ' معك؟')) pick(el, 'revenge', id); return;
     case 'vote': return pick(el, 'vote', id);
     case 'startVote': return once(el, () => api('startVote'));
-    case 'extend': return once(el, () => api('extend'));
+    case 'endTurn': return once(el, () => api('endTurn'));
+    case 'skipTurn': return once(el, () => api('skipTurn'));
+    case 'keepVote': return once(el, () => api('keepVote'));
     case 'restart': return once(el, () => api('restart'));
     case 'leave': {
       if (!confirm('بدك تطلع من الغرفة؟')) return;
