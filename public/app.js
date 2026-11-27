@@ -319,7 +319,7 @@ function vLobby() {
       ${isHost ? `<div class="botrow">
         <button class="btn line sm" data-act="addBot" ${n >= s.maxPlayers ? 'disabled' : ''}>🤖 أضف بوت</button>
         ${bots ? `<button class="btn line sm" data-act="removeBots">شيل البوتات (${bots})</button>` : ''}
-        <span class="hint">عددكم ناقص؟ ضيف بوتات. بيلعبوا لحالهم: بيختاروا بالليل وبيصوّتوا بالنهار.</span>
+        <span class="hint">${s.aiBots ? '🧠 البوتات مربوطة بالذكاء الاصطناعي (Gemini): بتحلل وبتحكي بالدردشة.' : 'عددكم ناقص؟ ضيف بوتات. بيحللوا التصويتات وبيلعبوا لحالهم.'}</span>
       </div>` : bots ? `<p class="hint" style="margin-top:12px">🤖 في ${bots} ${bots === 1 ? 'بوت' : 'بوتات'} بالغرفة، بيلعبوا لحالهم.</p>` : ''}
       <div class="section"><h2>الأوراق بهالجولة${s.rolePreview ? ` (${n} لاعبين)` : ''}</h2>${lineup}</div>
       ${settings}`,
