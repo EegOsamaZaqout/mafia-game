@@ -18,6 +18,7 @@ let flipped = false;
 let busy = false;
 let lastBeat = Date.now();
 let curTab = 'chat';
+let nightMode = 'kill';    // المافيا بالليل: قتل أو إسكات
 const cache = {};          // آخر HTML لكل جزء، عشان ما نرسم إشي ما تغيّر
 
 // ---------------- أدوات ----------------
@@ -58,7 +59,7 @@ async function api(action, data = {}, withSession = true) {
 
 const R = (id) => (state && state.roles[id]) || { name: '?', icon: '?', team: 'town', desc: '' };
 const P = (id) => state.players.find((p) => p.id === id);
-const teamName = { mafia: 'فريق المافيا', town: 'فريق المدينة', neutral: 'لحاله' };
+const teamName = { mafia: 'فريق المافيا', town: 'فريق الصالحين' };
 const ORD = ['الأولى', 'الثانية', 'الثالثة', 'الرابعة', 'الخامسة', 'السادسة', 'السابعة', 'الثامنة', 'التاسعة', 'العاشرة'];
 const DAYORD = ['الأول', 'الثاني', 'الثالث', 'الرابع', 'الخامس', 'السادس', 'السابع', 'الثامن', 'التاسع', 'العاشر'];
 const ord = (n, list) => list[n - 1] || String(n);
@@ -183,8 +184,9 @@ function phaseCurtain(s) {
     case 'day': return curtain('طلع الصبح', 'اليوم ' + ord(s.day, DAYORD));
     case 'vote': return curtain('التصويت', 'مين لازم يطلع؟');
     case 'dusk': return curtain('المغرب', s.lastEvent && s.lastEvent.out ? `طلع ${s.lastEvent.out.name}` : 'ما حدا طلع');
+    case 'revenge': return curtain('الولد الصالح', 'بيختار مين يطلع معه', true);
     case 'ended': {
-      const t = s.winner === 'town' ? 'فازت المدينة' : s.winner === 'mafia' ? 'فازت المافيا' : 'فاز المهرج';
+      const t = s.winner === 'town' ? 'فاز الصالحين' : 'فازت المافيا';
       return curtain(t, iWon() ? 'مبروك، فزت' : 'خسرت هالمرة', s.winner !== 'town');
     }
     case 'lobby': return me ? null : null;
@@ -193,7 +195,6 @@ function phaseCurtain(s) {
 function iWon() {
   const s = state;
   if (!s.winner) return false;
-  if (s.winner === 'jester') return s.winnerId === s.me.id;
   return R(s.me.role).team === s.winner;
 }
 
@@ -208,6 +209,7 @@ function render() {
       if (navigator.vibrate) { try { navigator.vibrate(120); } catch (e) {} }
     }
     if (s.phase === 'reveal') flipped = false;
+    if (s.phase === 'night') nightMode = 'kill';
     lastPhaseKey = key;
     window.scrollTo({ top: 0 });
   }
@@ -218,7 +220,7 @@ function render() {
   $('#sideToggle').classList.remove('hidden');
   $('#clock').classList.remove('hidden');
 
-  const views = { lobby: vLobby, reveal: vReveal, night: vNight, day: vDay, vote: vVote, dusk: vDusk, ended: vEnded };
+  const views = { lobby: vLobby, reveal: vReveal, night: vNight, day: vDay, vote: vVote, dusk: vDusk, revenge: vRevenge, ended: vEnded };
   const v = (views[s.phase] || vLobby)();
   put(main, 'main', v.main);
   put($('#dock'), 'dock', v.dock || '');
@@ -261,12 +263,13 @@ setInterval(tick, 250);
 function card(p, o = {}) {
   const s = state;
   const r = p.role ? R(p.role) : null;
-  const face = !!r && (p.id === s.me.id || !p.alive || s.phase === 'ended' || o.showRole);
+  const face = !!r && (p.id === s.me.id || !p.alive || s.phase === 'ended' || o.showRole || p.id === s.mayorRevealed);
   const cls = ['card', face ? 'face' : '', face && r.team === 'mafia' ? 'mafia' : '', p.alive || s.phase === 'lobby' ? '' : 'dead',
     p.id === s.me.id ? 'me' : '', p.online ? '' : 'off', o.sel ? 'sel' : ''].filter(Boolean).join(' ');
   const inner = `
     ${!face && r ? `<span class="corner" title="${esc(r.name)}">${r.icon}</span>` : ''}
     ${p.bot ? '<span class="mic" title="بوت">🤖</span>' : p.voice ? '<span class="mic" title="بالصوت">🎙️</span>' : ''}
+    ${s.silenced === p.id && ['day', 'vote', 'dusk', 'revenge'].includes(s.phase) && p.alive ? '<span class="hush" title="مسكَّت اليوم">🤐</span>' : ''}
     ${o.votes ? `<span class="votes">${o.votes}</span>` : ''}
     ${face ? `<span class="ini">${r.icon}</span><span class="rname">${esc(r.name)}</span>` : `<span class="ini">${p.alive || s.phase === 'lobby' ? initial(p.name) : '✝'}</span>`}
     ${o.who ? `<span class="who">${o.who}</span>` : ''}
@@ -287,7 +290,7 @@ function vLobby() {
   const bots = s.players.filter((p) => p.bot).length;
   const counts = {};
   (s.rolePreview || []).forEach((r) => (counts[r] = (counts[r] || 0) + 1));
-  const order = ['godfather', 'mafia', 'doctor', 'detective', 'sniper', 'mayor', 'jester', 'citizen'];
+  const order = ['shaykh', 'silencer', 'mafia', 'mayor', 'goodboy', 'medic', 'sniper', 'citizen'];
   const lineup = s.rolePreview
     ? `<div class="lineup">${order.filter((r) => counts[r]).map((r) => `<span class="lu ${R(r).team === 'mafia' ? 'mafia' : ''}">${R(r).icon} ${esc(R(r).name)} <span class="n">${counts[r]}</span></span>`).join('')}</div>`
     : `<p class="muted" style="color:var(--ash)">بدكم ${s.minPlayers} لاعبين على الأقل. ضايل ${s.minPlayers - n}.</p>`;
@@ -359,58 +362,105 @@ function vNight() {
   const s = state;
   const me = s.me;
   const r = R(me.role);
-  const mv = (s.night && s.night.mafiaVotes) || [];
+  const n = s.night || {};
+  const mf = n.mafia || null; // اختيارات المافيا (للمافيا والأموات بس)
+  const isMafia = r.team === 'mafia';
   let main = `<div class="stage"><h1>الليلة ${ord(s.day, ORD)}</h1>`;
   let dock = '';
+  const mafiaTags = (p) => {
+    if (!mf) return '';
+    const t = [];
+    if (mf.kill === p.id) t.push('🎩 اغتيال');
+    if (mf.silence === p.id) t.push('🤐 تسكيت');
+    return t.join('<br>');
+  };
 
   if (!me.alive) {
-    const ch = (s.night && s.night.choices) || {};
-    main += `<p>إنت ميت. بتتفرج على اللي بيصير بالسر، وممنوع تحكي للعايشين.</p></div>`;
+    const ch = n.choices || {};
+    main += `<p>إنت طالع من اللعبة. بتتفرج على اللي بيصير بالسر، وممنوع تحكي للعايشين.</p></div>`;
     main += tableOf(s.players, (p) => {
       const t = ch[p.id];
-      return card(p, { who: p.alive && t ? `← ${t === 'skip' ? 'ما أطلق' : esc(P(t)?.name)}` : '' });
+      const mine = p.alive && t ? `← ${t === 'skip' ? 'ما أطلق' : esc(P(t)?.name)}` : '';
+      return card(p, { who: [mine, mafiaTags(p)].filter(Boolean).join('<br>') });
     });
     dock = `<span class="msg">إنت بتتفرج</span>`;
-  } else if (!s.night.canAct) {
-    main += `<p>نام. ما عندك شي تعمله الليلة، والصبح بيطلع لحاله لما يخلص الوقت.</p></div>`;
-    main += tableOf(s.players, (p) => card(p, { showRole: R(me.role).team === 'mafia' && p.role && R(p.role).team === 'mafia' }));
-    dock = `<span class="msg">نايم... 😴</span>`;
+  } else if (!n.canAct) {
+    if (isMafia && mf) {
+      // مافيا عادي: بيشوف شو اختار الشيخ ومافيا التسكيت
+      main += `<p>${mf.killer ? `${esc(mf.killer)} بيختار الاغتيال الليلة` : ''}${mf.silencer ? ` و${esc(mf.silencer)} بيختار التسكيت` : ''}. ساعدهم بدردشة المافيا.</p></div>`;
+      main += tableOf(s.players, (p) => card(p, { who: mafiaTags(p), showRole: p.role && R(p.role).team === 'mafia' }));
+      dock = `<span class="msg">إحكي مع المافيا بالدردشة 🔪</span>`;
+    } else {
+      main += `<p>نام. ما عندك شي تعمله الليلة، والصبح بيطلع لحاله لما يخلص الوقت.</p></div>`;
+      main += tableOf(s.players, (p) => card(p));
+      dock = `<span class="msg">نايم... 😴</span>`;
+    }
   } else {
-    const my = s.night.myChoice;
+    // دور إله شغل الليلة. إذا عنده شغلتين (اغتيال وتسكيت) بيبدّل بينهم
+    const both = n.needKill && n.needSilence;
+    const mode = both ? nightMode : n.needSilence ? 'silence' : 'kill';
+    const my = n.myChoice;
+    const mySil = n.mySilence;
     let prompt, ok;
-    if (r.team === 'mafia') { prompt = 'اختاروا مين تقتلوا الليلة. إذا اختلفتوا، بيطلع اللي عليه أكثر أصوات.'; ok = (p) => p.alive && !(p.role && R(p.role).team === 'mafia'); }
-    else if (me.role === 'doctor') { prompt = s.doctorSelfUsed ? 'اختار مين تحمي الليلة. حميت حالك قبل، فما بتقدر مرة ثانية.' : 'اختار مين تحمي الليلة. بتقدر تحمي حالك مرة وحدة باللعبة.'; ok = (p) => p.alive && !(p.id === me.id && s.doctorSelfUsed); }
-    else if (me.role === 'detective') { prompt = 'اختار مين تفحص. النتيجة بتوصلك لحالك الصبح.'; ok = (p) => p.alive && p.id !== me.id; }
-    else { prompt = 'معك رصاصة وحدة باللعبة كلها. بدك تطلقها الليلة؟'; ok = (p) => p.alive && p.id !== me.id; }
+    if (mode === 'silence') {
+      prompt = 'اختار أي لاعب تسكّته (حتى حالك أو واحد من المافيا). ما رح يقدر يحكي ولا يصوّت بكرا.';
+      ok = (p) => p.alive;
+    } else if (n.isKiller) {
+      prompt = me.role === 'shaykh' ? 'اختار شخص واحد تغتاله الليلة.' : 'الشيخ طلع من اللعبة، فإنت صرت تختار الاغتيال. اختار شخص واحد.';
+      ok = (p) => p.alive && !(p.role && R(p.role).team === 'mafia');
+    } else if (me.role === 'medic') {
+      prompt = 'توقّع مين رح يغتال شيخ المافيا الليلة. إذا توقعت صح، بتنقذه.';
+      ok = (p) => p.alive;
+    } else {
+      prompt = 'معك رصاصة وحدة باللعبة كلها. إذا أصبت مافيا بيطلع، وإذا أصبت صالح بتطلع إنت وهو.';
+      ok = (p) => p.alive && p.id !== me.id;
+    }
     main += `<p>${prompt}</p></div>`;
-    main += tableOf(s.players, (p) => {
-      const picks = r.team === 'mafia' ? mv.filter((m) => m.target === p.id).map((m) => esc(m.name)) : [];
-      return card(p, { act: 'nightPick', disabled: !ok(p), sel: my === p.id, who: picks.length ? '🔪 ' + picks.join('، ') : '', showRole: r.team === 'mafia' && p.role && R(p.role).team === 'mafia' });
-    });
-    const chosen = my && my !== 'skip' ? P(my) : null;
-    dock = (me.role === 'sniper' ? `<button class="btn ${my === 'skip' ? 'on' : 'line'}" data-act="nightPick" data-id="skip">مش الليلة</button>` : '')
-      + `<span class="msg">${chosen ? `اخترت <b>${esc(chosen.name)}</b>. بتقدر تغيّر لحد ما يخلص الوقت.` : my === 'skip' ? 'ما رح تطلق الليلة.' : 'اضغط على ورقة لتختار.'}</span>`;
+    main += tableOf(s.players, (p) => card(p, {
+      act: 'nightPick', disabled: !ok(p), sel: (mode === 'silence' ? mySil : my) === p.id,
+      who: mafiaTags(p), showRole: isMafia && p.role && R(p.role).team === 'mafia',
+    }));
+    const nm = (id) => (id && id !== 'skip' ? esc(P(id)?.name || '') : id === 'skip' ? 'بلا' : '—');
+    if (both) {
+      dock = `<div class="seg" role="group" aria-label="شو بدك تختار">
+          <button class="${mode === 'kill' ? 'on' : ''}" data-act="nightMode" data-v="kill">🎩 الاغتيال${my ? ' ✓' : ''}</button>
+          <button class="${mode === 'silence' ? 'on' : ''}" data-act="nightMode" data-v="silence">🤐 التسكيت${mySil ? ' ✓' : ''}</button>
+        </div>`;
+    }
+    if (mode === 'silence') {
+      dock += `<button class="btn sm ${mySil === 'skip' ? 'on' : 'line'}" data-act="nightPick" data-id="skip">بلا تسكيت</button>
+        <span class="msg">${both ? `الاغتيال: <b>${nm(my)}</b> • ` : ''}التسكيت: <b>${nm(mySil)}</b></span>`;
+    } else if (me.role === 'sniper' && !n.isKiller) {
+      dock += `<button class="btn ${my === 'skip' ? 'on' : 'line'}" data-act="nightPick" data-id="skip">مش الليلة</button>
+        <span class="msg">${my && my !== 'skip' ? `رح تقنص <b>${nm(my)}</b>` : my === 'skip' ? 'ما رح تطلق الليلة' : 'اضغط على ورقة لتقنص'}</span>`;
+    } else {
+      dock += `<span class="msg">${my ? `اخترت <b>${nm(my)}</b>${both ? ` • التسكيت: <b>${nm(mySil)}</b>` : ''}. بتقدر تغيّر لحد ما يخلص الوقت.` : 'اضغط على ورقة لتختار.'}</span>`;
+    }
   }
-  main += notebook();
   return { main, dock };
 }
 
-function notebook() {
-  const me = state.me;
-  if (me.role !== 'detective' || !me.notes.length) return '';
-  return `<div class="notebook"><h3>دفتر المحقق</h3><ul>${me.notes.map((n) =>
-    `<li><span>الليلة ${ord(n.day, ORD)}: ${esc(n.name)}</span><span class="${n.result === 'mafia' ? 'mafia' : ''}">${n.result === 'mafia' ? 'مافيا' : 'بريء'}</span></li>`).join('')}</ul></div>`;
-}
+function notebook() { return ''; }
 
 // ---------------- الإعلانات ----------------
 function morning() {
   const e = state.lastEvent;
   if (!e || e.type !== 'morning') return '';
+  const why = { kill: 'اغتالته المافيا', sniped: 'انقنص', backfire: 'القناص أصاب صالح، فطلع معه' };
+  const ico = { kill: '💀', sniped: '🎯', backfire: '🎯' };
   let h = e.killed.length
-    ? e.killed.map((k) => `<div class="ann kill"><span class="ico">💀</span><span><b>${esc(k.name)}</b> انقتل الليلة${k.role ? `، وكان ${R(k.role).icon} ${esc(R(k.role).name)}` : ''}</span></div>`).join('')
-    : `<div class="ann"><span class="ico">🕊️</span><span>ليلة هادية، ما مات حدا</span></div>`;
-  if (e.saved) h += `<div class="ann"><span class="ico">💉</span><span>حدا كان رح يموت، بس الطبيب أنقذه</span></div>`;
+    ? e.killed.map((k) => `<div class="ann kill"><span class="ico">${ico[k.cause] || '💀'}</span><span><b>${esc(k.name)}</b> ${why[k.cause] || 'طلع من اللعبة'}${k.role ? `، وكان ${R(k.role).icon} ${esc(R(k.role).name)}` : ''}</span></div>`).join('')
+    : `<div class="ann"><span class="ico">🕊️</span><span>ليلة هادية، ما طلع حدا</span></div>`;
+  if (e.saved) h += `<div class="ann"><span class="ico">🚑</span><span>الإسعاف توقّع صح وأنقذ حدا من الاغتيال</span></div>`;
+  if (e.silenced) h += `<div class="ann kill"><span class="ico">🤐</span><span><b>${esc(e.silenced.name)}</b> مسكَّت اليوم، ما بيقدر يحكي ولا يصوّت</span></div>`;
+  h += revengeAnn();
   return `<div class="announce">${h}</div>`;
+}
+function revengeAnn() {
+  const v = state.lastEvent && state.lastEvent.revenge;
+  if (!v) return '';
+  const t = v.target;
+  return `<div class="ann kill"><span class="ico">🧒</span><span>الولد الصالح ${esc(v.by)} أخد <b>${esc(t.name)}</b> معه${t.role ? `، وكان ${R(t.role).icon} ${esc(R(t.role).name)}` : ''}</span></div>`;
 }
 function voteResult() {
   const e = state.lastEvent;
@@ -421,17 +471,41 @@ function voteResult() {
 const mafiaMate = (p) => R(state.me.role).team === 'mafia' && p.role && R(p.role).team === 'mafia';
 
 // ---------------- النهار ----------------
+// زر العمدة: يكشف كرته (صوته بيصير بـ 3)
+function mayorBtn() {
+  const s = state;
+  if (s.me.role !== 'mayor' || !s.me.alive || s.mayorRevealed || s.silenced === s.me.id) return '';
+  return `<button class="btn line" data-act="revealMayor">⚖️ اكشف كرتي</button>`;
+}
+const hushedMe = () => state.silenced === state.me.id && state.me.alive;
+
 function vDay() {
   const s = state;
+  const status = !s.me.alive ? 'إنت طالع من اللعبة، بتتفرج بس' : hushedMe() ? 'مافيا التسكيت سكّتك 🤐 ما بتحكي ولا بتصوّت اليوم' : 'وقت النقاش';
   return {
     main: `
       <div class="stage"><h1>صباح اليوم ${ord(s.day, DAYORD)}</h1><p>ناقشوا مين بتشكّوا فيه. التصويت بيبلش لحاله لما يخلص الوقت.</p></div>
       ${morning()}
-      ${tableOf(s.players, (p) => card(p, { showRole: mafiaMate(p) }))}
-      ${notebook()}`,
-    dock: s.me.isHost
-      ? `<button class="btn red" data-act="startVote">ابدأ التصويت الآن</button><button class="btn line" data-act="extend">زيد 30 ثانية</button>`
-      : `<span class="msg">${s.me.alive ? 'وقت النقاش' : 'إنت ميت، بتتفرج بس'}</span>`,
+      ${tableOf(s.players, (p) => card(p, { showRole: mafiaMate(p) }))}`,
+    dock: (s.me.isHost ? `<button class="btn red" data-act="startVote">ابدأ التصويت الآن</button><button class="btn line" data-act="extend">زيد 30 ثانية</button>` : '')
+      + mayorBtn()
+      + (s.me.isHost ? '' : `<span class="msg">${status}</span>`),
+  };
+}
+
+// ---------------- الولد الصالح ----------------
+function vRevenge() {
+  const s = state;
+  const rv = s.revenge || {};
+  const mine = rv.pid === s.me.id;
+  return {
+    main: `
+      <div class="stage"><h1>الولد الصالح</h1><p>${mine
+        ? 'طلعت من اللعبة، بس إلك حق تختار شخص واحد يطلع معك. اختار اللي بتشك إنه مافيا.'
+        : `${esc(rv.name || '')} كان الولد الصالح، وهلأ بيختار شخص يطلع معه...`}</p></div>
+      ${morning()}${voteResult()}
+      ${tableOf(s.players, (p) => mine && p.alive ? card(p, { act: 'revenge' }) : card(p, { showRole: mafiaMate(p) }))}`,
+    dock: mine ? `<span class="msg">اضغط على ورقة اللي بدك تاخده معك</span>` : `<span class="msg">بانتظار الولد الصالح يختار</span>`,
   };
 }
 
@@ -440,22 +514,26 @@ function vVote() {
   const s = state;
   const votes = s.votes || {};
   const alive = s.players.filter((p) => p.alive);
+  const voters = alive.filter((p) => p.id !== s.silenced);
   const voted = Object.keys(votes).length;
   const my = votes[s.me.id];
+  const w = (id) => (id === s.mayorRevealed ? 3 : 1); // العمدة المكشوف صوته بـ 3
   const counts = {};
-  Object.values(votes).forEach((t) => (counts[t] = (counts[t] || 0) + 1));
-  const votersOf = (id) => Object.entries(votes).filter(([, t]) => t === id).map(([v]) => esc(P(v)?.name)).join('، ');
+  Object.entries(votes).forEach(([v, t]) => (counts[t] = (counts[t] || 0) + w(v)));
+  const votersOf = (id) => Object.entries(votes).filter(([, t]) => t === id).map(([v]) => esc(P(v)?.name) + (w(v) > 1 ? ' ×3' : '')).join('، ');
   const target = my && my !== 'skip' ? P(my) : null;
+  const canVote = s.me.alive && !hushedMe();
   return {
     main: `
-      <div class="stage"><h1>التصويت</h1><p>${voted} من ${alive.length} صوّتوا. إذا صار تعادل، ما حدا بيطلع.</p></div>
+      <div class="stage"><h1>التصويت</h1><p>${voted} من ${voters.length} صوّتوا. اللي عليه أكثر أصوات بيطلع، وإذا صار تعادل ما حدا بيطلع.</p></div>
       ${tableOf(s.players, (p) => p.alive
-        ? card(p, { act: 'vote', disabled: !s.me.alive || p.id === s.me.id, sel: my === p.id, votes: counts[p.id], who: votersOf(p.id), showRole: mafiaMate(p) })
+        ? card(p, { act: 'vote', disabled: !canVote || p.id === s.me.id, sel: my === p.id, votes: counts[p.id], who: votersOf(p.id), showRole: mafiaMate(p) })
         : card(p))}`,
-    dock: s.me.alive
+    dock: canVote
       ? `<button class="btn ${my === 'skip' ? 'on' : 'line'}" data-act="vote" data-id="skip">تخطّي${counts.skip ? ` (${counts.skip})` : ''}</button>
-         <span class="msg">${target ? `صوّتت على <b>${esc(target.name)}</b>. بتقدر تغيّر.` : my === 'skip' ? 'اخترت تتخطى.' : 'اضغط على ورقة اللي بتشك فيه.'}</span>`
-      : `<span class="msg">الميت ما بيصوّت</span>`,
+         ${mayorBtn()}
+         <span class="msg">${target ? `صوّتت على <b>${esc(target.name)}</b>${w(s.me.id) > 1 ? ' بـ 3 أصوات' : ''}. بتقدر تغيّر.` : my === 'skip' ? 'اخترت تتخطى.' : 'اضغط على ورقة اللي بتشك فيه.'}</span>`
+      : `<span class="msg">${!s.me.alive ? 'اللي طالع من اللعبة ما بيصوّت' : 'مسكَّت 🤐 ما بتقدر تصوّت اليوم'}</span>`,
   };
 }
 
@@ -474,8 +552,8 @@ function vDusk() {
 // ---------------- النهاية ----------------
 function vEnded() {
   const s = state;
-  const icon = s.winner === 'town' ? '🏙️' : s.winner === 'mafia' ? '🔪' : '🃏';
-  const title = s.winner === 'town' ? 'فازت المدينة' : s.winner === 'mafia' ? 'فازت المافيا' : `فاز المهرج ${esc(P(s.winnerId)?.name || '')}`;
+  const icon = s.winner === 'town' ? '🏙️' : '🔪';
+  const title = s.winner === 'town' ? 'فاز الصالحين' : 'فازت المافيا';
   const won = iWon();
   return {
     main: `
@@ -498,7 +576,7 @@ function renderSide() {
     : `<div class="empty">لسا ما صار إشي. أول ما يموت حدا أو يطلع بالتصويت، بيبيّن هون.</div>`);
   // الأدوار
   const counts = s.roleCounts || (s.rolePreview || []).reduce((m, r) => { m[r] = (m[r] || 0) + 1; return m; }, {});
-  const order = ['godfather', 'mafia', 'doctor', 'detective', 'sniper', 'mayor', 'jester', 'citizen'];
+  const order = ['shaykh', 'silencer', 'mafia', 'mayor', 'goodboy', 'medic', 'sniper', 'citizen'];
   const list = order.filter((r) => counts[r]);
   put($('#pane-roles'), 'roles', list.length
     ? `<div class="rolelist">${list.map((r) => `<div class="rr"><div class="ri">${R(r).icon}</div><div><div class="rt">${esc(R(r).name)} <span class="n">× ${counts[r]}</span></div><div class="rd">${esc(R(r).desc)}</div></div></div>`).join('')}</div>`
@@ -524,11 +602,12 @@ function renderChat() {
   const ch = s.chatChannel;
   const titles = { public: 'الكل بيشوف هالدردشة', mafia: 'دردشة المافيا، ما حدا غيركم بيشوفها', dead: 'دردشة الأموات' };
   const t = $('#chatTitle');
-  t.textContent = ch ? titles[ch] : 'الدردشة مقفلة بالليل';
+  const hushed = s.silenced === s.me.id && ['day', 'vote', 'dusk', 'revenge'].includes(s.phase);
+  t.textContent = ch ? titles[ch] : hushed ? 'المافيا سكّتوك اليوم، ما بتقدر تكتب' : 'الدردشة مقفلة بالليل';
   t.className = 'chan' + (ch === 'mafia' ? ' mafia' : '');
   const input = $('#chatInput');
   input.disabled = !ch;
-  input.placeholder = ch ? (ch === 'mafia' ? 'خططوا بالسر' : 'اكتب رسالة') : 'نايمين، ما في حكي';
+  input.placeholder = ch ? (ch === 'mafia' ? 'خططوا بالسر' : 'اكتب رسالة') : hushed ? 'مسكَّت 🤐' : 'نايمين، ما في حكي';
 
   const newest = s.chat.length ? s.chat[s.chat.length - 1].id : 0;
   if (newest === lastChatId) return;
@@ -563,20 +642,23 @@ $('#modal').addEventListener('click', (e) => { if (e.target.id === 'modal') $('#
 function showRules() {
   openModal(`
     <h2>كيف بنلعب؟</h2>
-    <p>كل واحد بياخد ورقة فيها دور سري. المافيا بيعرفوا بعض، والباقي ما بيعرفوا مين مين.</p>
-    <p><b>بالليل</b> المافيا بيختاروا ضحية، الطبيب بيحمي حدا، والمحقق بيفحص حدا. الباقي نايمين.</p>
-    <p><b>بالنهار</b> بنعرف مين مات، بنتناقش، وبعدين بنصوّت مين يطلع. إذا تعادلت الأصوات، ما حدا بيطلع.</p>
-    <p><b>المدينة بتفوز</b> لما تطلّع كل المافيا. <b>المافيا بتفوز</b> لما يصير عددهم قد الباقيين أو أكثر.</p>
-    <p>كل مرحلة إلها وقت، ولما يخلص الوقت اللعبة بتكمّل لحالها. هيك ما حدا بيقدر يعطّلها.</p>
-    <p><b>عددكم ناقص؟</b> المضيف بيقدر يضيف بوتات 🤖 من اللوبي. البوت بياخد دور زي أي لاعب، وبيلعب لحاله.</p>
-    <p style="color:var(--ash)">عدد المافيا: 1 لـ 4–5 لاعبين، 2 لـ 6–8، 3 لـ 9–11، 4 لـ 12–15، و5 لـ 16–20. الأدوار الجانبية بتدخل لحالها: زعيم المافيا من 7، القناص من 8، العمدة من 9، والمهرج من 10.</p>`);
+    <p>كل واحد بياخد كرت فيه دور سري. المافيا بيعرفوا بعض، والصالحين ما بيعرفوا مين مين.</p>
+    <p><b>بالليل:</b> شيخ المافيا بيختار مين يغتال، ومافيا التسكيت بيختار مين يسكّت، والإسعاف بيتوقع مين رح ينغتال، والقناص بيقرر إذا بدو يطلق رصاصته.</p>
+    <p><b>بالنهار:</b> بنعرف مين طلع، بنتناقش، وبعدين بنصوّت. اللي عليه أكثر أصوات بيطلع وبينكشف كرته، وإذا تعادلت الأصوات ما حدا بيطلع.</p>
+    <p><b>الفوز:</b> الصالحين بيفوزوا لما تطلع كل المافيا. المافيا بيفوزوا لما يصير عدد الصالحين قد عددهم.</p>
+    <h3 style="margin-top:14px">الأدوار</h3>
+    ${['shaykh', 'silencer', 'mafia', 'mayor', 'goodboy', 'medic', 'sniper', 'citizen'].map((k) => {
+      const r = (state && state.roles[k]) || null;
+      return r ? `<div class="rr" style="display:grid;grid-template-columns:36px 1fr;gap:10px;padding:8px 0;border-bottom:1px solid var(--line)"><div style="font-size:24px;text-align:center">${r.icon}</div><div><b>${esc(r.name)}</b> <span style="color:var(--ash)">(${teamName[r.team]})</span><br><span style="color:var(--ash);font-size:14px">${esc(r.desc)}</span></div></div>` : '';
+    }).join('') || `<p style="color:var(--ash)">شيخ المافيا، مافيا التسكيت، المافيا، عمدة الصالحين، الولد الصالح، الإسعاف، القناص، والمواطن الصالح.</p>`}
+    <p style="color:var(--ash);margin-top:12px">بـ 14 لاعب: 3 مافيا (الشيخ، التسكيت، مافيا) و11 صالحين (العمدة، الولد الصالح، الإسعاف، القناص، و7 مواطنين). لما العدد أقل، الأدوار بتنقص لحالها.</p>`);
 }
 
 // ---------------- الأفعال ----------------
-async function pick(el, action, target) {
+async function pick(el, action, target, extra = {}) {
   document.querySelectorAll(`[data-act="${el.dataset.act}"]`).forEach((b) => b.classList.remove('sel', 'on'));
   el.classList.add(el.classList.contains('card') ? 'sel' : 'on');
-  const r = await api(action, { target });
+  const r = await api(action, { target, ...extra });
   if (r.error) { delete cache.main; delete cache.dock; render(); }
 }
 async function once(el, fn) {
@@ -629,7 +711,16 @@ document.addEventListener('click', async (e) => {
     case 'removeBots': return once(el, () => api('removeBots'));
     case 'start': return once(el, () => api('start'));
     case 'ready': return once(el, () => api('ready'));
-    case 'nightPick': return pick(el, 'night', id);
+    case 'nightPick': {
+      const n = state.night || {};
+      const silence = n.needSilence && (!n.needKill || nightMode === 'silence');
+      return pick(el, 'night', id, silence ? { kind: 'silence' } : {});
+    }
+    case 'nightMode': nightMode = el.dataset.v; delete cache.main; delete cache.dock; return render();
+    case 'revealMayor':
+      if (!confirm('بدك تكشف كرتك قدام الكل؟ الكل رح يعرف إنك العمدة، وصوتك بيصير بـ 3.')) return;
+      return once(el, () => api('revealMayor'));
+    case 'revenge': if (confirm('تاخد ' + (P(id)?.name || '') + ' معك؟')) pick(el, 'revenge', id); return;
     case 'vote': return pick(el, 'vote', id);
     case 'startVote': return once(el, () => api('startVote'));
     case 'extend': return once(el, () => api('extend'));

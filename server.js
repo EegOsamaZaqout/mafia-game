@@ -16,52 +16,53 @@ const MAX_PLAYERS = 20;
 
 // ---------------- الأدوار ----------------
 const ROLES = {
-  mafia:     { name: 'مافيا',        team: 'mafia',   icon: '🔪', side: false,
-               desc: 'كل ليلة بتتفق مع باقي المافيا على شخص تقتلوه. بتفوزوا لما يصير عددكم مساوي أو أكثر من الباقيين.' },
-  godfather: { name: 'زعيم المافيا', team: 'mafia',   icon: '🎩', side: true,
-               desc: 'أنت من المافيا وبتختار الضحية معهم، بس لما المحقق يفحصك بتطلعله بريء.' },
-  doctor:    { name: 'الطبيب',       team: 'town',    icon: '💉', side: false,
-               desc: 'كل ليلة بتختار شخص تحميه من القتل. بتقدر تحمي حالك مرة وحدة بس باللعبة كلها.' },
-  detective: { name: 'المحقق',       team: 'town',    icon: '🔍', side: false,
-               desc: 'كل ليلة بتفحص شخص وبتعرف إذا هو مافيا ولا بريء. النتيجة بتوصلك لحالك.' },
-  sniper:    { name: 'القناص',       team: 'town',    icon: '🎯', side: true,
-               desc: 'معك رصاصة وحدة باللعبة كلها، بتقدر تطلقها بأي ليلة. انتبه لا تقتل واحد بريء!' },
-  mayor:     { name: 'العمدة',       team: 'town',    icon: '⚖️', side: true,
-               desc: 'مواطن من المدينة، بس صوتك بالتصويت بالنهار بيتحسب صوتين.' },
-  jester:    { name: 'المهرج',       team: 'neutral', icon: '🃏', side: true,
-               desc: 'ما إلك فريق. بتفوز لحالك إذا صوّتوا عليك وطلّعوك بالنهار. خلّيهم يشكّوا فيك!' },
-  citizen:   { name: 'مواطن',        team: 'town',    icon: '👤', side: false,
-               desc: 'ما عندك قدرة خاصة. ركّز بالنقاش واكشف المافيا بالتصويت.' },
+  shaykh:   { name: 'شيخ المافيا',    team: 'mafia', icon: '🎩',
+              desc: 'إنت قائد المافيا. كل ليلة بتختار شخص واحد تغتاله وتطلّعه من اللعبة.' },
+  silencer: { name: 'مافيا التسكيت',  team: 'mafia', icon: '🤐',
+              desc: 'كل ليلة بتختار أي لاعب (حتى حالك أو واحد من المافيا) تمنعه من الحكي والتصويت بالنهار اللي بعدها.' },
+  mafia:    { name: 'مافيا',          team: 'mafia', icon: '🔪',
+              desc: 'إنت من المافيا وبتعرف شركاءك. ساعدهم بالنقاش والتصويت. إذا طلع الشيخ، إنت بتصير تختار الاغتيال.' },
+  mayor:    { name: 'عمدة الصالحين',  team: 'town',  icon: '⚖️',
+              desc: 'بالنهار بتقدر تكشف كرتك قدام الكل بأي وقت. بعد ما تكشفه، صوتك بالتصويت بيتحسب 3 أصوات.' },
+  goodboy:  { name: 'الولد الصالح',   team: 'town',  icon: '🧒',
+              desc: 'قدرتك بتشتغل لما تطلع: إذا اغتالوك أو طلّعوك بالتصويت، بتختار شخص واحد يطلع معك. إذا كان مافيا بيطلع مافيا، وإذا كان صالح بيطلع صالح.' },
+  medic:    { name: 'الإسعاف',        team: 'town',  icon: '🚑',
+              desc: 'كل ليلة بتتوقع مين رح يغتال شيخ المافيا. إذا توقعت صح، بتنقذه من الموت.' },
+  sniper:   { name: 'القناص',         team: 'town',  icon: '🎯',
+              desc: 'معك رصاصة وحدة باللعبة كلها، بتطلقها بأي ليلة. إذا أصبت مافيا بيطلع، وإذا أصبت صالح بتطلع إنت وهو.' },
+  citizen:  { name: 'مواطن صالح',     team: 'town',  icon: '👤',
+              desc: 'ما عندك قدرة خاصة. ركّز بالنقاش واكشف المافيا بالتصويت.' },
 };
-const SIDE_ROLES = ['godfather', 'sniper', 'mayor', 'jester'];
+// الأدوار اللي المضيف بيقدر يشغّلها أو يطفيها
+const SIDE_ROLES = ['silencer', 'mayor', 'goodboy', 'sniper'];
 // مدة كل مرحلة بالثواني حسب سرعة اللعب اللي بيختارها المضيف
 const SCALE = Number(process.env.PACE_SCALE || 1); // للتجربة بس: بيسرّع المؤقتات
 const PACE = {
-  fast:   { reveal: 20, night: 30, day: 90,  vote: 30, dusk: 6 },
-  normal: { reveal: 30, night: 45, day: 150, vote: 45, dusk: 7 },
-  slow:   { reveal: 40, night: 60, day: 240, vote: 60, dusk: 8 },
+  fast:   { reveal: 20, night: 30, day: 90,  vote: 30, dusk: 6, revenge: 15 },
+  normal: { reveal: 30, night: 45, day: 150, vote: 45, dusk: 7, revenge: 20 },
+  slow:   { reveal: 40, night: 60, day: 240, vote: 60, dusk: 8, revenge: 25 },
 };
-// أقل عدد لاعبين لتدخل كل شخصية جانبية تلقائياً
-const SIDE_MIN = { godfather: 7, sniper: 8, mayor: 9, jester: 10 };
+// أقل عدد لاعبين ليدخل كل دور تلقائياً
+const SIDE_MIN = { mayor: 5, sniper: 6, silencer: 7, goodboy: 8 };
 
+// عدد المافيا حسب عدد اللاعبين (14 لاعب = 3 مافيا و11 صالحين)
 function mafiaCount(n) {
-  if (n <= 5) return 1;
-  if (n <= 8) return 2;
-  if (n <= 11) return 3;
-  if (n <= 15) return 4;
-  return 5;
+  if (n <= 6) return 1;
+  if (n <= 10) return 2;
+  if (n <= 16) return 3;
+  return 4;
 }
 
 // بيرجع قائمة الأدوار حسب عدد اللاعبين والإعدادات
 function buildRoles(n, settings) {
   const on = (r) => settings.sideMode === 'auto' ? n >= SIDE_MIN[r] : !!settings.side[r];
   let m = mafiaCount(n);
-  const list = [];
-  if (on('godfather')) { list.push('godfather'); m--; }
+  const list = ['shaykh'];
+  m--;
+  if (m > 0 && on('silencer')) { list.push('silencer'); m--; }
   for (let i = 0; i < m; i++) list.push('mafia');
-  list.push('doctor', 'detective');
-  const extras = ['sniper', 'mayor', 'jester'].filter(on);
-  // إذا العدد ما بيكفي، بنشيل الجانبية من الآخر
+  list.push('medic');
+  const extras = ['mayor', 'sniper', 'goodboy'].filter(on);
   while (list.length + extras.length > n && extras.length) extras.pop();
   list.push(...extras);
   while (list.length < n) list.push('citizen');
@@ -98,15 +99,16 @@ function newRoom() {
     hostId: null,
     players: [],
     phase: 'lobby', // lobby | reveal | night | day | vote | dusk | ended
-    settings: { sideMode: 'auto', side: { godfather: true, sniper: true, mayor: true, jester: true }, revealOnDeath: true, pace: 'normal' },
+    settings: { sideMode: 'auto', side: { silencer: true, mayor: true, goodboy: true, sniper: true }, revealOnDeath: true, pace: 'normal' },
     day: 0,
     night: null,
     votes: {},
     lastEvent: null,
     winner: null,
     winnerId: null,
-    doctorSelfUsed: false,
     sniperUsed: false,
+    mayorRevealed: null,
+    revenge: null,
     chat: [],
     chatSeq: 0,
     clients: new Map(), // playerId -> Set(res)
@@ -169,7 +171,7 @@ function addBot(room) {
 
 // بنأجّل حركة البوت شوي عشان تبيّن طبيعية، وبنلغيها إذا المرحلة تغيّرت
 function botLater(room, frac0, frac1, fn) {
-  const sec = PACE[room.settings.pace][({ reveal: 'reveal', night: 'night', day: 'day', vote: 'vote', dusk: 'dusk' })[room.phase]] * SCALE;
+  const sec = (PACE[room.settings.pace][room.phase] || 10) * SCALE;
   const ms = sec * 1000 * (frac0 + Math.random() * (frac1 - frac0));
   const stamp = room.phase + ':' + room.day;
   setTimeout(() => {
@@ -186,28 +188,38 @@ function mostCommon(list) {
   return top.length ? pickOne(top) : null;
 }
 
+// مين بيختار الاغتيال الليلة: الشيخ، وإذا طلع فالمافيا العادي، وبعدين مافيا التسكيت
+function killerOf(room) {
+  for (const r of ['shaykh', 'mafia', 'silencer']) {
+    const k = alive(room).find((p) => p.role === r);
+    if (k) return k;
+  }
+  return null;
+}
+const silencerOf = (room) => alive(room).find((p) => p.role === 'silencer') || null;
+
 function botNight(room, b) {
-  if (room.phase !== 'night' || !b.alive || b.id in room.night.choices) return;
+  if (room.phase !== 'night' || !b.alive) return;
   const a = alive(room);
   const others = a.filter((x) => x.id !== b.id);
+  const town = a.filter((x) => teamOf(x) !== 'mafia');
+  const mayor = room.mayorRevealed && a.find((x) => x.id === room.mayorRevealed);
+  if (silencerOf(room) === b && !(b.id in room.night.silence)) {
+    const pool = town.filter((x) => x.id !== room.night.choices[b.id]);
+    room.night.silence[b.id] = pool.length ? pickOne(pool).id : 'skip';
+    if (nightDone(room)) { resolveNight(room); return; }
+  }
+  if (b.id in room.night.choices) return;
   let t = null;
-  if (teamOf(b) === 'mafia') {
-    // البوت المافيا بيمشي ورا اختيار شركاؤه، وإذا ما اختاروا بيختار لحاله
-    const mates = a.filter((x) => teamOf(x) === 'mafia' && x.id !== b.id);
-    const picks = mates.map((m) => room.night.choices[m.id]).filter((x) => x && x !== 'skip');
-    const targets = a.filter((x) => teamOf(x) !== 'mafia');
-    if (!targets.length) return;
-    t = picks.length ? mostCommon(picks) : pickOne(targets).id;
-  } else if (b.role === 'doctor') {
-    t = !room.doctorSelfUsed && Math.random() < 0.3 ? b.id : pickOne(others).id;
-  } else if (b.role === 'detective') {
-    const checked = new Set(b.notes.map((n) => n.name));
-    const fresh = others.filter((x) => !checked.has(x.name));
-    t = pickOne(fresh.length ? fresh : others).id;
+  if (killerOf(room) === b) {
+    if (!town.length) return;
+    t = mayor && Math.random() < 0.6 ? mayor.id : pickOne(town).id;
+  } else if (b.role === 'medic') {
+    t = mayor && Math.random() < 0.5 ? mayor.id : Math.random() < 0.25 ? b.id : pickOne(others).id;
   } else if (b.role === 'sniper') {
     t = room.day >= 2 && Math.random() < 0.2 ? pickOne(others).id : 'skip';
   } else return;
-  nightAction(room, b, t);
+  nightAction(room, b, t, 'kill');
 }
 
 function leading(room, ok) {
@@ -218,7 +230,7 @@ function leading(room, ok) {
 }
 
 function botVote(room, b) {
-  if (room.phase !== 'vote' || !b.alive || b.id in room.votes) return;
+  if (room.phase !== 'vote' || !b.alive || b.id in room.votes || room.silenced === b.id) return;
   const others = alive(room).filter((x) => x.id !== b.id);
   if (!others.length) return;
   let t;
@@ -227,33 +239,29 @@ function botVote(room, b) {
     const lead = leading(room, (id) => town.some((x) => x.id === id));
     t = lead && Math.random() < 0.7 ? lead : town.length ? pickOne(town).id : 'skip';
   } else {
-    const known = b.role === 'detective' && b.notes.filter((n) => n.result === 'mafia').map((n) => others.find((x) => x.name === n.name)).find(Boolean);
-    const claimed = (room.claims || []).map((id) => others.find((x) => x.id === id)).find(Boolean);
-    if (known) t = known.id;
-    else if (claimed && Math.random() < 0.8) t = claimed.id;
-    else {
-      const r = Math.random();
-      const lead = leading(room, (id) => id !== b.id && id !== 'skip');
-      t = r < 0.05 ? 'skip' : lead && r < 0.85 ? lead : pickOne(others).id;
-    }
+    const r = Math.random();
+    const lead = leading(room, (id) => id !== b.id && id !== 'skip' && id !== room.mayorRevealed);
+    const pool = others.filter((x) => x.id !== room.mayorRevealed);
+    t = r < 0.05 ? 'skip' : lead && r < 0.85 ? lead : pool.length ? pickOne(pool).id : 'skip';
   }
   castVote(room, b, t);
 }
 
 function botChat(room, b) {
-  if (!b.alive || !['day', 'vote'].includes(room.phase)) return;
-  if (b.role === 'detective') {
-    // المحقق البوت إذا لقى مافيا بيحكيها قدام الكل
-    const hit = b.notes.filter((n) => n.result === 'mafia').map((n) => alive(room).find((x) => x.name === n.name)).find(Boolean);
-    if (hit && !(room.claims || []).includes(hit.id)) {
-      (room.claims = room.claims || []).push(hit.id);
-      pushChat(room, { ch: 'public', from: b.name, text: `أنا المحقق، وفحصت ${hit.name}: طلع مافيا! صوّتوا عليه` });
-      return;
-    }
-  }
+  if (!b.alive || !['day', 'vote'].includes(room.phase) || room.silenced === b.id) return;
   const pool = alive(room).filter((x) => x.id !== b.id && (teamOf(b) !== 'mafia' || teamOf(x) !== 'mafia'));
   if (!pool.length) return;
   pushChat(room, { ch: 'public', from: b.name, text: pickOne(BOT_LINES).replace('{x}', pickOne(pool).name) });
+}
+
+function botMayor(room, b) {
+  if (b.role === 'mayor' && b.alive && !room.mayorRevealed && room.silenced !== b.id && room.day >= 2 && Math.random() < 0.5) revealMayor(room, b);
+}
+
+function botRevenge(room, b) {
+  if (room.phase !== 'revenge' || !room.revenge || room.revenge.pid !== b.id) return;
+  const pool = alive(room);
+  if (pool.length) revengePick(room, b, pickOne(pool).id);
 }
 
 // بداية كل مرحلة: البوتات بيبرمجوا حركتهم
@@ -270,11 +278,14 @@ function scheduleBots(room, key) {
   } else if (key === 'day') {
     bots.forEach((b) => {
       if (!b.alive) return;
-      if (b.role === 'detective') botLater(room, 0.05, 0.3, () => botChat(room, b));
-      else if (Math.random() < 0.5) botLater(room, 0.1, 0.7, () => botChat(room, b));
+      if (b.role === 'mayor') botLater(room, 0.1, 0.4, () => botMayor(room, b));
+      if (Math.random() < 0.5) botLater(room, 0.1, 0.7, () => botChat(room, b));
     });
   } else if (key === 'vote') {
     bots.forEach((b) => { if (b.alive) botLater(room, 0.15, 0.6, () => botVote(room, b)); });
+  } else if (key === 'revenge') {
+    const b = room.revenge && getP(room, room.revenge.pid);
+    if (b && b.isBot) botLater(room, 0.2, 0.5, () => botRevenge(room, b));
   }
 }
 
@@ -300,19 +311,20 @@ function onTimeout(room, stamp) {
   else if (room.phase === 'day') startVote(room);
   else if (room.phase === 'vote') resolveVote(room);
   else if (room.phase === 'dusk') startNight(room);
+  else if (room.phase === 'revenge') finishRevenge(room);
   broadcast(room);
 }
 function addLog(room, icon, text) { room.log.push({ day: room.day, icon, text }); }
+const roleTxt = (room, p) => (room.settings.revealOnDeath ? ` (كان ${ROLES[p.role].name})` : '');
 
 // ---------------- مراحل اللعبة ----------------
 function startGame(room) {
   const roles = shuffle(buildRoles(room.players.length, room.settings));
   room.roleList = roles.slice();
-  room.claims = []; // اتهامات المحقق البوت (أسامي لاعبين)
   room.players.forEach((p, i) => { p.role = roles[i]; p.alive = true; p.ready = false; p.notes = []; });
   Object.assign(room, {
     phase: 'reveal', day: 0, night: null, votes: {}, lastEvent: null, winner: null, winnerId: null,
-    doctorSelfUsed: false, sniperUsed: false, chat: [], log: [],
+    sniperUsed: false, mayorRevealed: null, revenge: null, chat: [], log: [], silenced: null,
   });
   sys(room, 'بدأت اللعبة! كل واحد يشوف دوره بالسر 🤫');
   setTimer(room, 'reveal');
@@ -321,10 +333,16 @@ function startGame(room) {
 function startNight(room) {
   room.day++;
   room.phase = 'night';
-  room.night = { choices: {} };
+  room.night = { choices: {}, silence: {} };
+  room.silenced = null; // التسكيت بيخلص لما ييجي الليل
   room.votes = {};
   sys(room, `🌙 الليلة ${room.day} — المدينة نامت.`);
   setTimer(room, 'night');
+}
+
+function startDay(room) {
+  room.phase = 'day';
+  setTimer(room, 'day');
 }
 
 function startVote(room) {
@@ -334,26 +352,51 @@ function startVote(room) {
   setTimer(room, 'vote');
 }
 
+// مين عنده شغل الليلة
 function nightActors(room) {
+  const k = killerOf(room);
   return alive(room).filter((p) =>
-    teamOf(p) === 'mafia' || p.role === 'doctor' || p.role === 'detective' || (p.role === 'sniper' && !room.sniperUsed));
+    p === k || p.role === 'silencer' || p.role === 'medic' || (p.role === 'sniper' && !room.sniperUsed));
+}
+// شو لازم يختار كل واحد بالليل
+function nightNeeds(room, p) {
+  const n = { kill: false, silence: false };
+  if (!p.alive) return n;
+  if (p === killerOf(room) || p.role === 'medic' || (p.role === 'sniper' && !room.sniperUsed)) n.kill = true;
+  if (p.role === 'silencer') n.silence = true;
+  return n;
 }
 
-function nightAction(room, p, target) {
+function nightAction(room, p, target, kind) {
   if (room.phase !== 'night') throw 'مش وقت الليل';
   if (!p.alive) throw 'أنت ميت 💀';
-  if (!nightActors(room).includes(p)) throw 'ما عندك شي تعمله الليلة';
+  const need = nightNeeds(room, p);
   const t = getP(room, target);
-  if (target === 'skip') {
-    if (p.role !== 'sniper') throw 'لازم تختار حدا';
+  if (kind === 'silence') {
+    if (!need.silence) throw 'التسكيت لمافيا التسكيت بس';
+    if (target !== 'skip' && (!t || !t.alive)) throw 'اختيار غير صالح';
+    room.night.silence[p.id] = target; // بيقدر يسكّت أي حدا، حتى حاله أو واحد من المافيا
   } else {
-    if (!t || !t.alive) throw 'اختيار غير صالح';
-    if (teamOf(p) === 'mafia' && teamOf(t) === 'mafia') throw 'ما بتقدر تقتل واحد من المافيا';
-    if ((p.role === 'detective' || p.role === 'sniper') && t.id === p.id) throw 'ما بتقدر تختار حالك';
-    if (p.role === 'doctor' && t.id === p.id && room.doctorSelfUsed) throw 'حميت حالك قبل، ما بتقدر مرة ثانية';
+    if (!need.kill) throw 'ما عندك شي تعمله الليلة';
+    const isKiller = p === killerOf(room);
+    if (target === 'skip') {
+      if (p.role !== 'sniper' || isKiller) throw 'لازم تختار حدا';
+    } else {
+      if (!t || !t.alive) throw 'اختيار غير صالح';
+      if (isKiller && teamOf(t) === 'mafia') throw 'ما بتقدر تغتال واحد من المافيا';
+      if (p.role === 'sniper' && !isKiller && t.id === p.id) throw 'ما بتقدر تقنص حالك';
+    }
+    room.night.choices[p.id] = target;
   }
-  room.night.choices[p.id] = target;
-  if (nightActors(room).every((a) => a.id in room.night.choices)) resolveNight(room);
+  if (nightDone(room)) resolveNight(room);
+}
+
+// الليل بيخلص بدري لما كل واحد يختار اللي عليه
+function nightDone(room) {
+  return nightActors(room).every((a) => {
+    const n = nightNeeds(room, a);
+    return (!n.kill || a.id in room.night.choices) && (!n.silence || a.id in room.night.silence);
+  });
 }
 
 function topOf(tally) {
@@ -363,72 +406,115 @@ function topOf(tally) {
   return { max, top: keys.filter((k) => tally[k] === max) };
 }
 
-function pubDead(room, p) {
-  return { id: p.id, name: p.name, role: room.settings.revealOnDeath ? p.role : null };
+function pubDead(room, p, cause) {
+  return { id: p.id, name: p.name, role: room.settings.revealOnDeath ? p.role : null, cause };
 }
 
 function resolveNight(room) {
   const ch = room.night.choices;
-  const a = alive(room);
-  // المافيا: الأغلبية، وإذا تعادل بنختار عشوائي من المتعادلين
-  const tally = {};
-  a.filter((p) => teamOf(p) === 'mafia').forEach((p) => {
-    const t = ch[p.id];
-    if (t && t !== 'skip') tally[t] = (tally[t] || 0) + 1;
-  });
-  const { top } = topOf(tally);
-  const mafiaTarget = top.length ? top[crypto.randomInt(top.length)] : null;
+  const killer = killerOf(room);
+  const kill = killer && ch[killer.id] && ch[killer.id] !== 'skip' ? ch[killer.id] : null;
+  const medic = alive(room).find((p) => p.role === 'medic');
+  const save = medic ? ch[medic.id] || null : null;
+  const sniper = alive(room).find((p) => p.role === 'sniper');
+  const shot = sniper && !room.sniperUsed && ch[sniper.id] && ch[sniper.id] !== 'skip' ? ch[sniper.id] : null;
+  const silencer = silencerOf(room);
+  const sil = silencer && room.night.silence[silencer.id] && room.night.silence[silencer.id] !== 'skip' ? room.night.silence[silencer.id] : null;
 
-  const doctor = a.find((p) => p.role === 'doctor');
-  const save = doctor ? ch[doctor.id] || null : null;
-  if (doctor && save === doctor.id) room.doctorSelfUsed = true;
-
-  const sniper = a.find((p) => p.role === 'sniper');
-  let shot = null;
-  if (sniper && !room.sniperUsed && ch[sniper.id] && ch[sniper.id] !== 'skip') { shot = ch[sniper.id]; room.sniperUsed = true; }
-
-  const detective = a.find((p) => p.role === 'detective');
-  if (detective && ch[detective.id]) {
-    const t = getP(room, ch[detective.id]);
-    const isMafia = teamOf(t) === 'mafia' && t.role !== 'godfather';
-    detective.notes.push({ day: room.day, name: t.name, result: isMafia ? 'mafia' : 'innocent' });
-  }
-
-  const deaths = new Set();
+  const dead = []; // [{id, cause}]
+  const add = (id, cause) => { if (!dead.some((d) => d.id === id)) dead.push({ id, cause }); };
   let saved = false;
-  if (mafiaTarget) { if (mafiaTarget === save) saved = true; else deaths.add(mafiaTarget); }
-  if (shot) { if (shot === save) saved = true; else deaths.add(shot); }
-  deaths.forEach((id) => { getP(room, id).alive = false; });
+  if (kill) { if (kill === save) saved = true; else add(kill, 'kill'); }
+  if (shot) {
+    room.sniperUsed = true;
+    const t = getP(room, shot);
+    if (teamOf(t) === 'mafia') add(shot, 'sniped');
+    else { add(shot, 'sniped'); add(sniper.id, 'backfire'); } // القناص أصاب صالح: بيطلعوا الاثنين
+  }
+  dead.forEach((d) => { getP(room, d.id).alive = false; });
 
-  room.lastEvent = { type: 'morning', day: room.day, killed: [...deaths].map((id) => pubDead(room, getP(room, id))), saved };
+  const sp = sil && !dead.some((d) => d.id === sil) ? getP(room, sil) : null;
+  room.silenced = sp ? sp.id : null;
+  room.lastEvent = { type: 'morning', day: room.day, killed: dead.map((d) => pubDead(room, getP(room, d.id), d.cause)), saved, silenced: sp ? { id: sp.id, name: sp.name } : null };
   room.night = null;
-  room.phase = 'day';
-  sys(room, deaths.size ? `☀️ طلع الصبح... ${[...deaths].map((id) => getP(room, id).name).join(' و ')} ما صحي 💀` : '☀️ طلع الصبح وما مات حدا الليلة!');
-  if (deaths.size) [...deaths].forEach((id) => { const d = getP(room, id); addLog(room, '💀', `${d.name} انقتل بالليل${room.settings.revealOnDeath ? ` (كان ${ROLES[d.role].name})` : ''}`); });
-  else addLog(room, '🕊️', 'ليلة هادية، ما مات حدا');
-  if (saved) addLog(room, '💉', 'الطبيب أنقذ حدا من الموت');
-  checkWin(room);
-  if (room.phase === 'day') setTimer(room, 'day');
+  sys(room, dead.length ? `☀️ طلع الصبح... ${dead.map((d) => getP(room, d.id).name).join(' و ')} طلع من اللعبة 💀` : '☀️ طلع الصبح وما طلع حدا الليلة!');
+  const why = { kill: 'اغتالته المافيا', sniped: 'انقنص', backfire: 'القناص أصاب صالح فطلع معه' };
+  if (dead.length) dead.forEach((d) => { const x = getP(room, d.id); addLog(room, '💀', `${x.name}: ${why[d.cause]}${roleTxt(room, x)}`); });
+  else addLog(room, '🕊️', 'ليلة هادية، ما طلع حدا');
+  if (saved) addLog(room, '🚑', 'الإسعاف توقّع صح وأنقذ حدا من الاغتيال');
+  if (sp) { addLog(room, '🤐', `${sp.name} مسكَّت اليوم`); sys(room, `🤐 ${sp.name} مسكَّت اليوم، ما بيقدر يحكي ولا يصوّت`); }
+  afterExit(room, dead.map((d) => d.id), 'day');
 }
+
+// بعد ما يطلع حدا: إذا الولد الصالح طلع، بيختار مين يطلع معه قبل ما نكمّل
+function afterExit(room, ids, next) {
+  const boy = ids.map((id) => getP(room, id)).find((p) => p && p.role === 'goodboy');
+  if (boy && alive(room).length) {
+    room.phase = 'revenge';
+    room.revenge = { pid: boy.id, next };
+    sys(room, `🧒 ${boy.name} كان الولد الصالح! بيختار شخص يطلع معه...`);
+    setTimer(room, 'revenge');
+    return;
+  }
+  continueAfter(room, next);
+}
+function continueAfter(room, next) {
+  checkWin(room);
+  if (room.phase === 'ended') return;
+  if (next === 'day') startDay(room);
+  else { room.phase = 'dusk'; setTimer(room, 'dusk'); }
+}
+function revengePick(room, p, target) {
+  if (room.phase !== 'revenge' || !room.revenge || room.revenge.pid !== p.id) throw 'مش دورك';
+  const t = getP(room, target);
+  if (!t || !t.alive) throw 'اختيار غير صالح';
+  t.alive = false;
+  room.lastEvent = Object.assign({}, room.lastEvent, { revenge: { by: p.name, target: pubDead(room, t, 'revenge'), mafia: teamOf(t) === 'mafia' } });
+  sys(room, `🧒 ${p.name} أخد ${t.name} معه!`);
+  addLog(room, '🧒', `الولد الصالح ${p.name} أخد ${t.name} معه${roleTxt(room, t)}`);
+  finishRevenge(room, true);
+}
+function finishRevenge(room, picked) {
+  if (room.phase !== 'revenge') return;
+  const next = room.revenge ? room.revenge.next : 'day';
+  if (!picked) { sys(room, '🧒 الولد الصالح ما اختار حدا'); addLog(room, '🧒', 'الولد الصالح ما اختار حدا يطلع معه'); }
+  room.revenge = null;
+  continueAfter(room, next);
+}
+
+// العمدة بيكشف كرته: صوته بيصير بـ 3
+function revealMayor(room, p) {
+  if (p.role !== 'mayor') throw 'هاي للعمدة بس';
+  if (!p.alive) throw 'إنت طالع من اللعبة';
+  if (!['day', 'vote'].includes(room.phase)) throw 'بتقدر تكشف كرتك بالنهار بس';
+  if (room.silenced === p.id) throw 'المافيا سكّتوك اليوم 🤐';
+  if (room.mayorRevealed) throw 'كشفت كرتك قبل';
+  room.mayorRevealed = p.id;
+  sys(room, `⚖️ ${p.name} كشف كرته: هو عمدة الصالحين، وصوته صار بـ 3!`);
+  addLog(room, '⚖️', `${p.name} كشف إنه عمدة الصالحين`);
+}
+const voteWeight = (room, p) => (p.id === room.mayorRevealed ? 3 : 1);
+const canVote = (room, p) => p.alive && room.silenced !== p.id;
 
 function castVote(room, p, target) {
   if (room.phase !== 'vote') throw 'التصويت مش مفتوح';
   if (!p.alive) throw 'الميت ما بيصوّت 💀';
+  if (room.silenced === p.id) throw 'المافيا سكّتوك، ما بتقدر تصوّت اليوم 🤐';
   if (target !== 'skip') {
     const t = getP(room, target);
     if (!t || !t.alive) throw 'اختيار غير صالح';
     if (t.id === p.id) throw 'ما بتقدر تصوّت على حالك';
   }
   room.votes[p.id] = target;
-  if (alive(room).every((x) => x.id in room.votes)) resolveVote(room);
+  if (alive(room).filter((x) => canVote(room, x)).every((x) => x.id in room.votes)) resolveVote(room);
 }
 
 function resolveVote(room) {
   const tally = {};
   for (const [pid, t] of Object.entries(room.votes)) {
     const voter = getP(room, pid);
-    if (!voter || !voter.alive) continue;
-    tally[t] = (tally[t] || 0) + (voter.role === 'mayor' ? 2 : 1);
+    if (!voter || !canVote(room, voter)) continue;
+    tally[t] = (tally[t] || 0) + voteWeight(room, voter);
   }
   const { max, top } = topOf(tally);
   let out = null;
@@ -436,26 +522,19 @@ function resolveVote(room) {
   room.votes = {};
   if (out) {
     out.alive = false;
-    room.lastEvent = { type: 'vote', day: room.day, out: pubDead(room, out), tie: false };
+    room.lastEvent = { type: 'vote', day: room.day, out: pubDead(room, out, 'vote'), tie: false };
     sys(room, `⚖️ المدينة قررت تطلّع ${out.name}`);
-    addLog(room, '⚖️', `المدينة طلّعت ${out.name}${room.settings.revealOnDeath ? ` (كان ${ROLES[out.role].name})` : ''}`);
-    if (out.role === 'jester') {
-      room.winner = 'jester'; room.winnerId = out.id; room.phase = 'ended';
-      sys(room, `🃏 ${out.name} كان المهرج وضحك على الكل!`);
-      addLog(room, '🃏', `${out.name} كان المهرج وفاز لحاله`);
-      clearTimer(room);
-      return;
-    }
+    addLog(room, '⚖️', `المدينة طلّعت ${out.name}${roleTxt(room, out)}`);
+    afterExit(room, [out.id], 'dusk');
   } else {
     room.lastEvent = { type: 'vote', day: room.day, out: null, tie: top.length > 1 };
     sys(room, '⚖️ ما حدا طلع اليوم.');
     addLog(room, '🤝', top.length > 1 ? 'تعادل بالتصويت، ما حدا طلع' : 'المدينة تخطّت التصويت');
+    continueAfter(room, 'dusk');
   }
-  room.phase = 'dusk';
-  checkWin(room);
-  if (room.phase === 'dusk') setTimer(room, 'dusk');
 }
 
+// الصالحين بيفوزوا إذا طلعت كل المافيا، والمافيا بيفوزوا لما يصير عددهم قد الصالحين
 function checkWin(room) {
   if (room.phase === 'ended') return;
   const a = alive(room);
@@ -464,10 +543,10 @@ function checkWin(room) {
   if (m === 0) w = 'town';
   else if (m >= a.length - m) w = 'mafia';
   if (w) {
-    room.winner = w; room.phase = 'ended';
+    room.winner = w; room.phase = 'ended'; room.revenge = null;
     clearTimer(room);
-    addLog(room, w === 'town' ? '🏙️' : '🔪', w === 'town' ? 'فازت المدينة' : 'فازت المافيا');
-    sys(room, w === 'town' ? '🏙️ فازت المدينة! انكشفت كل المافيا.' : '🔪 فازت المافيا! سيطروا على المدينة.');
+    addLog(room, w === 'town' ? '🏙️' : '🔪', w === 'town' ? 'فاز الصالحين' : 'فازت المافيا');
+    sys(room, w === 'town' ? '🏙️ فاز الصالحين! طلعت كل المافيا.' : '🔪 فازت المافيا! صار عددهم قد الصالحين.');
   }
 }
 
@@ -475,7 +554,7 @@ function backToLobby(room) {
   room.players = room.players.filter((p) => p.conns > 0 || p.id === room.hostId || p.isBot);
   room.players.forEach((p) => { p.role = null; p.alive = true; p.ready = false; p.notes = []; });
   clearTimer(room);
-  Object.assign(room, { phase: 'lobby', day: 0, night: null, votes: {}, lastEvent: null, winner: null, winnerId: null, chat: [], log: [], roleList: [] });
+  Object.assign(room, { phase: 'lobby', day: 0, night: null, votes: {}, lastEvent: null, winner: null, winnerId: null, chat: [], log: [], roleList: [], silenced: null, mayorRevealed: null, revenge: null });
 }
 
 // ---------------- الدردشة ----------------
@@ -490,6 +569,7 @@ function chatChannel(room, p) {
   if (room.phase === 'lobby' || room.phase === 'ended') return 'public';
   if (!p.alive) return 'dead';
   if (room.phase === 'night') return teamOf(p) === 'mafia' ? 'mafia' : null;
+  if (room.silenced === p.id) return null; // مسكَّت اليوم
   return 'public';
 }
 function canSee(room, p, ch) {
@@ -507,23 +587,29 @@ function view(room, p) {
   const myTeam = teamOf(p);
   const players = room.players.map((q) => {
     let role = null;
-    if (inGame && q.role && (q.id === p.id || omni || (myTeam === 'mafia' && teamOf(q) === 'mafia') || (!q.alive && room.settings.revealOnDeath))) role = q.role;
+    if (inGame && q.role && (q.id === p.id || omni || (myTeam === 'mafia' && teamOf(q) === 'mafia') || (!q.alive && room.settings.revealOnDeath) || q.id === room.mayorRevealed)) role = q.role;
     return { id: q.id, name: q.name, alive: q.alive, online: q.isBot || q.conns > 0, bot: !!q.isBot, ready: q.ready, voice: q.voice && q.conns > 0, role };
   });
 
   let night = null;
   if (room.phase === 'night') {
-    const actors = nightActors(room);
-    night = { canAct: actors.includes(p), myChoice: room.night.choices[p.id] || null };
+    const need = nightNeeds(room, p);
+    const killer = killerOf(room);
+    const sil = silencerOf(room);
+    night = { canAct: need.kill || need.silence, needKill: need.kill, needSilence: need.silence, isKiller: killer === p,
+      myChoice: room.night.choices[p.id] || null, mySilence: room.night.silence[p.id] || null };
     if (myTeam === 'mafia' || omni) {
-      night.mafiaVotes = alive(room).filter((x) => teamOf(x) === 'mafia').map((x) => ({ id: x.id, name: x.name, target: room.night.choices[x.id] || null }));
+      night.mafia = {
+        killer: killer ? killer.name : null, kill: killer ? room.night.choices[killer.id] || null : null,
+        silencer: sil ? sil.name : null, silence: sil ? room.night.silence[sil.id] || null : null,
+      };
     }
     if (omni) night.choices = room.night.choices;
   }
 
   return {
     code: room.code,
-    me: { id: p.id, name: p.name, role: p.role, alive: p.alive, notes: p.notes, isHost: room.hostId === p.id },
+    me: { id: p.id, name: p.name, role: p.role, alive: p.alive, isHost: room.hostId === p.id },
     hostId: room.hostId,
     phase: room.phase,
     day: room.day,
@@ -533,9 +619,11 @@ function view(room, p) {
     players,
     night,
     votes: room.phase === 'vote' ? room.votes : null,
-    doctorSelfUsed: p.role === 'doctor' ? room.doctorSelfUsed : undefined,
     sniperUsed: p.role === 'sniper' ? room.sniperUsed : undefined,
+    mayorRevealed: room.mayorRevealed,
+    revenge: room.revenge ? { pid: room.revenge.pid, name: (getP(room, room.revenge.pid) || {}).name } : null,
     lastEvent: room.lastEvent,
+    silenced: room.silenced,
     now: Date.now(), deadline: room.deadline, phaseTotal: room.phaseTotal, pace: PACE,
     roleCounts: inGame ? room.roleList.reduce((m, r) => { m[r] = (m[r] || 0) + 1; return m; }, {}) : null,
     log: room.log,
@@ -656,7 +744,9 @@ function handleAction(body) {
       if (room.players.every((x) => x.ready)) startNight(room);
       break;
     }
-    case 'night': nightAction(room, p, body.target); break;
+    case 'night': nightAction(room, p, body.target, body.kind === 'silence' ? 'silence' : 'kill'); break;
+    case 'revealMayor': revealMayor(room, p); break;
+    case 'revenge': revengePick(room, p, body.target); break;
     case 'startVote': {
       hostOnly();
       if (room.phase !== 'day') throw 'مش وقت التصويت';
@@ -686,7 +776,7 @@ function handleAction(body) {
       const text = String(body.text || '').trim().slice(0, 200);
       if (!text) break;
       const ch = chatChannel(room, p);
-      if (!ch) throw 'الدردشة مقفلة بالليل 🤫';
+      if (!ch) throw room.silenced === p.id ? 'مافيا التسكيت سكّتك، ما بتقدر تحكي اليوم 🤐' : 'الدردشة مقفلة بالليل 🤫';
       pushChat(room, { ch, from: p.name, text });
       break;
     }
