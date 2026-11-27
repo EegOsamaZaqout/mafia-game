@@ -19,7 +19,7 @@ const ROLES = {
   shaykh:   { name: 'شيخ المافيا',    team: 'mafia', icon: '🎩',
               desc: 'إنت قائد المافيا. كل ليلة بتختار شخص واحد تغتاله وتطلّعه من اللعبة.' },
   silencer: { name: 'مافيا التسكيت',  team: 'mafia', icon: '🤐',
-              desc: 'كل ليلة بتختار أي لاعب (حتى حالك أو واحد من المافيا) تمنعه من الحكي والتصويت بالنهار اللي بعدها.' },
+              desc: 'كل ليلة بتختار أي لاعب (حتى حالك أو واحد من المافيا) تمنعه من الحكي بالنهار اللي بعدها. بيقدر يصوّت بس ما بيحكي.' },
   mafia:    { name: 'مافيا',          team: 'mafia', icon: '🔪',
               desc: 'إنت من المافيا وبتعرف شركاءك. ساعدهم بالنقاش والتصويت. إذا طلع الشيخ، إنت بتصير تختار الاغتيال.' },
   mayor:    { name: 'عمدة الصالحين',  team: 'town',  icon: '⚖️',
@@ -230,7 +230,7 @@ function leading(room, ok) {
 }
 
 function botVote(room, b) {
-  if (room.phase !== 'vote' || !b.alive || b.id in room.votes || room.silenced === b.id) return;
+  if (room.phase !== 'vote' || !b.alive || b.id in room.votes) return;
   const others = alive(room).filter((x) => x.id !== b.id);
   if (!others.length) return;
   let t;
@@ -442,7 +442,7 @@ function resolveNight(room) {
   if (dead.length) dead.forEach((d) => { const x = getP(room, d.id); addLog(room, '💀', `${x.name}: ${why[d.cause]}${roleTxt(room, x)}`); });
   else addLog(room, '🕊️', 'ليلة هادية، ما طلع حدا');
   if (saved) addLog(room, '🚑', 'الإسعاف توقّع صح وأنقذ حدا من الاغتيال');
-  if (sp) { addLog(room, '🤐', `${sp.name} مسكَّت اليوم`); sys(room, `🤐 ${sp.name} مسكَّت اليوم، ما بيقدر يحكي ولا يصوّت`); }
+  if (sp) { addLog(room, '🤐', `${sp.name} مسكَّت اليوم`); sys(room, `🤐 ${sp.name} مسكَّت اليوم، ما بيقدر يحكي (بس بيصوّت)`); }
   afterExit(room, dead.map((d) => d.id), 'day');
 }
 
@@ -494,12 +494,11 @@ function revealMayor(room, p) {
   addLog(room, '⚖️', `${p.name} كشف إنه عمدة الصالحين`);
 }
 const voteWeight = (room, p) => (p.id === room.mayorRevealed ? 3 : 1);
-const canVote = (room, p) => p.alive && room.silenced !== p.id;
+const canVote = (room, p) => p.alive; // المسكوت بيصوّت عادي، بس ما بيحكي
 
 function castVote(room, p, target) {
   if (room.phase !== 'vote') throw 'التصويت مش مفتوح';
   if (!p.alive) throw 'الميت ما بيصوّت 💀';
-  if (room.silenced === p.id) throw 'المافيا سكّتوك، ما بتقدر تصوّت اليوم 🤐';
   if (target !== 'skip') {
     const t = getP(room, target);
     if (!t || !t.alive) throw 'اختيار غير صالح';

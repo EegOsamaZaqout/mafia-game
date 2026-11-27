@@ -403,7 +403,7 @@ function vNight() {
     const mySil = n.mySilence;
     let prompt, ok;
     if (mode === 'silence') {
-      prompt = 'اختار أي لاعب تسكّته (حتى حالك أو واحد من المافيا). ما رح يقدر يحكي ولا يصوّت بكرا.';
+      prompt = 'اختار أي لاعب تسكّته (حتى حالك أو واحد من المافيا). ما رح يقدر يحكي بكرا، بس بيصوّت.';
       ok = (p) => p.alive;
     } else if (n.isKiller) {
       prompt = me.role === 'shaykh' ? 'اختار شخص واحد تغتاله الليلة.' : 'الشيخ طلع من اللعبة، فإنت صرت تختار الاغتيال. اختار شخص واحد.';
@@ -452,7 +452,7 @@ function morning() {
     ? e.killed.map((k) => `<div class="ann kill"><span class="ico">${ico[k.cause] || '💀'}</span><span><b>${esc(k.name)}</b> ${why[k.cause] || 'طلع من اللعبة'}${k.role ? `، وكان ${R(k.role).icon} ${esc(R(k.role).name)}` : ''}</span></div>`).join('')
     : `<div class="ann"><span class="ico">🕊️</span><span>ليلة هادية، ما طلع حدا</span></div>`;
   if (e.saved) h += `<div class="ann"><span class="ico">🚑</span><span>الإسعاف توقّع صح وأنقذ حدا من الاغتيال</span></div>`;
-  if (e.silenced) h += `<div class="ann kill"><span class="ico">🤐</span><span><b>${esc(e.silenced.name)}</b> مسكَّت اليوم، ما بيقدر يحكي ولا يصوّت</span></div>`;
+  if (e.silenced) h += `<div class="ann kill"><span class="ico">🤐</span><span><b>${esc(e.silenced.name)}</b> مسكَّت اليوم، ما بيقدر يحكي بس بيقدر يصوّت</span></div>`;
   h += revengeAnn();
   return `<div class="announce">${h}</div>`;
 }
@@ -481,7 +481,7 @@ const hushedMe = () => state.silenced === state.me.id && state.me.alive;
 
 function vDay() {
   const s = state;
-  const status = !s.me.alive ? 'إنت طالع من اللعبة، بتتفرج بس' : hushedMe() ? 'مافيا التسكيت سكّتك 🤐 ما بتحكي ولا بتصوّت اليوم' : 'وقت النقاش';
+  const status = !s.me.alive ? 'إنت طالع من اللعبة، بتتفرج بس' : hushedMe() ? 'مافيا التسكيت سكّتك 🤐 ما بتحكي اليوم، بس بتصوّت عادي' : 'وقت النقاش';
   return {
     main: `
       <div class="stage"><h1>صباح اليوم ${ord(s.day, DAYORD)}</h1><p>ناقشوا مين بتشكّوا فيه. التصويت بيبلش لحاله لما يخلص الوقت.</p></div>
@@ -514,7 +514,7 @@ function vVote() {
   const s = state;
   const votes = s.votes || {};
   const alive = s.players.filter((p) => p.alive);
-  const voters = alive.filter((p) => p.id !== s.silenced);
+  const voters = alive;
   const voted = Object.keys(votes).length;
   const my = votes[s.me.id];
   const w = (id) => (id === s.mayorRevealed ? 3 : 1); // العمدة المكشوف صوته بـ 3
@@ -522,7 +522,7 @@ function vVote() {
   Object.entries(votes).forEach(([v, t]) => (counts[t] = (counts[t] || 0) + w(v)));
   const votersOf = (id) => Object.entries(votes).filter(([, t]) => t === id).map(([v]) => esc(P(v)?.name) + (w(v) > 1 ? ' ×3' : '')).join('، ');
   const target = my && my !== 'skip' ? P(my) : null;
-  const canVote = s.me.alive && !hushedMe();
+  const canVote = s.me.alive;
   return {
     main: `
       <div class="stage"><h1>التصويت</h1><p>${voted} من ${voters.length} صوّتوا. اللي عليه أكثر أصوات بيطلع، وإذا صار تعادل ما حدا بيطلع.</p></div>
@@ -533,7 +533,7 @@ function vVote() {
       ? `<button class="btn ${my === 'skip' ? 'on' : 'line'}" data-act="vote" data-id="skip">تخطّي${counts.skip ? ` (${counts.skip})` : ''}</button>
          ${mayorBtn()}
          <span class="msg">${target ? `صوّتت على <b>${esc(target.name)}</b>${w(s.me.id) > 1 ? ' بـ 3 أصوات' : ''}. بتقدر تغيّر.` : my === 'skip' ? 'اخترت تتخطى.' : 'اضغط على ورقة اللي بتشك فيه.'}</span>`
-      : `<span class="msg">${!s.me.alive ? 'اللي طالع من اللعبة ما بيصوّت' : 'مسكَّت 🤐 ما بتقدر تصوّت اليوم'}</span>`,
+      : `<span class="msg">اللي طالع من اللعبة ما بيصوّت</span>`,
   };
 }
 
